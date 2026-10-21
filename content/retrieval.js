@@ -68,10 +68,12 @@ var RetrievalIndex = (function () {
 				const v = Math.max(-1, Math.min(1, vecData[i]));
 				q[i] = Math.round(v * 127);
 			}
+			// Int8Array 含负值，必须先转成无符号字节再转字符串，否则 btoa 会因 >255 报错
+			const u8 = new Uint8Array(q.buffer, q.byteOffset, q.length);
 			let bin = '';
 			const step = 0x8000;
-			for (let i = 0; i < q.length; i += step) {
-				bin += String.fromCharCode.apply(null, q.subarray(i, i + step));
+			for (let i = 0; i < u8.length; i += step) {
+				bin += String.fromCharCode.apply(null, u8.subarray(i, i + step));
 			}
 			vecPart = btoa(bin);
 		}
@@ -335,7 +337,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.4',
+					ok: true, plugin: 'retrieval-index', version: '0.1.5',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
