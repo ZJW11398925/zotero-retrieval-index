@@ -178,22 +178,35 @@ var RetrievalIndex = (function () {
 		buildState = { running: true, phase: 'scanning', processed: 0, total: 0, chunks: 0, failed: 0, startedAt: Date.now(), error: null };
 		const t0 = Date.now();
 		try {
-			const libraryID = Zotero.Libraries.userLibraryID;
-			const s = new Zotero.Search();
-			s.libraryID = libraryID;
-			s.addCondition('itemType', 'is', 'attachment');
-			let ids = await s.search();
+			// 扫描全部可访问库（个人库 + 群组库），否则会漏掉群组库里的文献
+			const libs = Zotero.Libraries.getAll().filter(l => l.libraryType === 'user' || l.libraryType === 'group');
+			const libraries = [];
+			let ids = [];
+			for (const lib of libs) {
+				try {
+					const s = new Zotero.Search();
+					s.libraryID = lib.libraryID;
+					s.addCondition('itemType', 'is', 'attachment');
+					const got = await s.search();
+					ids.push(...got.map(id => ({ id, libraryID: lib.libraryID })));
+					libraries.push({ id: lib.libraryID, name: lib.name, type: lib.libraryType, attachments: got.length });
+				} catch (e) {
+					log('扫描库 ' + lib.libraryID + ' 失败：' + e);
+				}
+			}
 			if (limit > 0) ids = ids.slice(0, limit);
 			buildState.total = ids.length;
 			const maxPages = parseInt(getPref('maxPagesPerItem', 80), 10);
 			const chunkChars = parseInt(getPref('chunkChars', 520), 10);
 			const doEmbed = await ollamaAvailable();
-			ui('建立检索索引', '共 ' + ids.length + ' 个附件；向量化：' + (doEmbed ? '开启' : '关闭'));
+			if (!doEmbed) log('未检测到 Ollama，本次仅建立 BM25 索引（探测 ' + ollamaBase() + '/api/tags；若本机开了全局代理，需把 127.0.0.1 加入代理例外）');
+			ui('建立检索索引', '共 ' + ids.length + ' 个附件（' + libraries.map(l => l.name + ':' + l.attachments).join('，') + '）；向量化：' + (doEmbed ? '开启' : '关闭'));
 
 			const chunks = [];
 			const vecs = [];
-			let done = 0, used = 0, failed = 0, truncated = 0;
-			for (const id of ids) {
+			let done = 0, used = 0, failed = 0, truncated = 0, embedErrors = 0, dimOutProbe = 0;
+			for (const rec of ids) {
+				const id = rec.id;
 				if (cancelRequested) { log('用户取消'); break; }
 				const item = Zotero.Items.get(id);
 				if (!item || !item.isPDFAttachment() || !item.parentItemID) { done++; continue; }
@@ -214,13 +227,17 @@ var RetrievalIndex = (function () {
 				try { cs = RetrievalCore.chunkPages(pages, { chunkChars, overlapChars: 80, minChunk: 120 }); }
 				catch (e) { failed++; done++; continue; }
 				for (let i = 0; i < cs.length; i++) {
-					chunks.push({ cid: item.key + '#' + cs[i].page + '#' + i, itemKey: item.key, itemID: id, title, page: cs[i].page, text: cs[i].text });
+					chunks.push({
+						cid: item.key + '#' + cs[i].page + '#' + i, itemKey: item.key, itemID: id,
+						libraryID: rec.libraryID, title, page: cs[i].page, text: cs[i].text
+					});
 				}
 				if (doEmbed && cs.length) {
 					try {
 						const embs = await embedBatch(cs.map(c => c.text));
+						if (embs[0]) dimOutProbe = embs[0].length;
 						for (const e of embs) vecs.push(e);
-					} catch (e) { log('向量化失败：' + e); }
+					} catch (e) { embedErrors++; log('向量化失败：' + e); }
 				}
 				done++;
 				buildState.processed = done;
@@ -239,7 +256,8 @@ var RetrievalIndex = (function () {
 				vecData = packed.data; dimOut = packed.dim;
 			}
 			await saveIndex(chunks, vecData, dimOut, {
-				builtAt: new Date().toISOString(), libraryID, model: getPref('model', 'bge-m3'),
+				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
+				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
 				sourceAttachments: used, failed, truncated, elapsedMs: Date.now() - t0
 			});
 			cached = null; bm25 = null;
@@ -305,9 +323,28 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.0',
+					ok: true, plugin: 'retrieval-index', version: '0.1.3',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
+			}
+		};
+
+		Zotero.Server.Endpoints['/retrieval/ollama'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/ollama'].prototype = {
+			supportedMethods: ['GET'],
+			init: async function (options) {
+				const url = ollamaBase() + '/api/tags';
+				try {
+					const ac = new AbortController();
+					const timer = setTimeout(() => ac.abort(), 8000);
+					const res = await fetch(url, { signal: ac.signal });
+					clearTimeout(timer);
+					let models = [];
+					try { const j = await res.json(); models = (j.models || []).map(m => m.name); } catch (e) {}
+					return [200, 'application/json', JSON.stringify({ ok: res.ok, url, models })];
+				} catch (e) {
+					return [200, 'application/json', JSON.stringify({ ok: false, url, error: String((e && e.message) || e) })];
+				}
 			}
 		};
 
@@ -359,7 +396,7 @@ var RetrievalIndex = (function () {
 	}
 
 	function unregisterEndpoints() {
-		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build']) {
+		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama']) {
 			try { delete Zotero.Server.Endpoints[p]; } catch (e) {}
 		}
 	}
