@@ -367,19 +367,11 @@ var RetrievalIndex = (function () {
 				scoreMap.set(rl[i], (scoreMap.get(rl[i]) || 0) + 1 / (K_RRF + i + 1));
 			}
 		}
+		// 注意：曾尝试叠加“标题命中”绝对加分，实测是严重倒退——
+		// RRF 单路 rank1 仅 1/(60+1)≈0.016，任何绝对加分都会把“标题沾边但正文无关”的文献顶到最前。
+		// 离线评估（34 条金标）：加 0.25 后自然语言 R@5 从 93.8% 掉到 56.3%，故彻底移除。
 		const ranked = [];
-		for (const [i, base] of scoreMap) {
-			const c = idx.chunks[i];
-			if (!c) continue;
-			let boost = 0;
-			if (qSet.size) {
-				const tt = new Set(RetrievalCore.tokenize(c.title || ''));
-				let hit = 0;
-				for (const t of qSet) if (tt.has(t)) hit++;
-				boost = 0.25 * (hit / qSet.size);   // 标题命中最多 +0.25，约等于 RRF 前 10 名的量级
-			}
-			ranked.push([i, base + boost]);
-		}
+		for (const [i, base] of scoreMap) ranked.push([i, base]);
 		ranked.sort((a, b) => b[1] - a[1]);
 
 		const out = [];
@@ -437,7 +429,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.6',
+					ok: true, plugin: 'retrieval-index', version: '0.1.7',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
