@@ -303,7 +303,7 @@ var RetrievalIndex = (function () {
 		Zotero.Server.Endpoints['/retrieval/ping'] = function () {};
 		Zotero.Server.Endpoints['/retrieval/ping'].prototype = {
 			supportedMethods: ['GET'],
-			init: function () {
+			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
 					ok: true, plugin: 'retrieval-index', version: '0.1.0',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
@@ -314,7 +314,7 @@ var RetrievalIndex = (function () {
 		Zotero.Server.Endpoints['/retrieval/stats'] = function () {};
 		Zotero.Server.Endpoints['/retrieval/stats'].prototype = {
 			supportedMethods: ['GET'],
-			init: async function () {
+			init: async function (options) {
 				try {
 					await loadIndex();
 					return [200, 'application/json', JSON.stringify(stats())];
