@@ -1,0 +1,19 @@
+{
+  "manifest_version": 2,
+  "name": "Retrieval Index",
+  "version": "0.1.1",
+  "description": "Build a page-aware passage index for your local Zotero library and expose it over Zotero's local HTTP server.",
+  "author": "the-group",
+  "icons": {
+    "48": "chrome/content/icons/favicon@0.5x.png",
+    "96": "chrome/content/icons/favicon.png"
+  },
+  "applications": {
+    "zotero": {
+      "id": "retrieval-index@sit2023.local",
+      "strict_min_version": "6.999",
+      "strict_max_version": "11.*",
+      "update_url": "https://raw.githubusercontent.com/ZJW11398925/zotero-retrieval-index/main/update.json"
+    }
+  }
+}
