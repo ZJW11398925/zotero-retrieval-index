@@ -323,6 +323,14 @@ var RetrievalIndex = (function () {
 		}
 	}
 
+	// 标题归一化：库里存在“同一文献被建成多个独立条目”的情况（实测 30 组），
+	// 仅按父条目去重拦不住，需要再加一层标题级去重
+	function titleKeyOf(title) {
+		return String(title || '').toLowerCase()
+			.replace(/[\s\u3000\u00a0]+/g, '')
+			.replace(/[\-—–_,，。.、;；:：!！?？"'"'“”‘’()（）\[\]【】<>《》]/g, '');
+	}
+
 	// 用于对旧索引按需解析父条目（旧索引没有 parentKey 字段）
 	const parentKeyCache = new Map();
 	function resolveParentKey(c) {
@@ -385,12 +393,13 @@ var RetrievalIndex = (function () {
 			const isRet = c.retracted !== undefined ? !!c.retracted : isRetractedTitle(c.title);
 			if (isRet && !includeRetracted) { skippedRetracted++; continue; }
 			const pk = resolveParentKey(c);
-			const n = perPaper.get(pk) || 0;
+			const tk = titleKeyOf(c.title) || pk;   // 同标题不同条目也视为同一文献
+			const n = perPaper.get(tk) || 0;
 			if (n >= 2) continue;
 			const tkey = (c.text || '').slice(0, 120);
 			if (seenText.has(tkey)) continue;
 			seenText.add(tkey);
-			perPaper.set(pk, n + 1);
+			perPaper.set(tk, n + 1);
 			out.push({
 				itemKey: c.itemKey, parentKey: pk, title: c.title,
 				page: c.page ? c.page : null,
@@ -429,7 +438,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.7',
+					ok: true, plugin: 'retrieval-index', version: '0.1.8',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
