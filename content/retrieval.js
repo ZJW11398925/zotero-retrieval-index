@@ -109,8 +109,17 @@ var RetrievalIndex = (function () {
 				for (let i = 0; i < q.length; i++) matrix[i] = q[i] / 127;
 			} catch (e) { log('向量解码失败：' + e); matrix = null; }
 		}
-		cached = { chunks, matrix, dim, meta };
-		log('索引已加载：' + chunks.length + ' 块' + (matrix ? '（含向量）' : '（无向量）'));
+		// 摘要页先验：每篇文献的首页块（role='front'），用于优先作为该篇的代表段
+		const frontMap = new Map();
+		for (let i = 0; i < chunks.length; i++) {
+			const c = chunks[i];
+			if (c.role !== 'front') continue;
+			const k = titleKeyOf(c.title) || c.parentKey || c.itemKey;
+			const prevIdx = frontMap.get(k);
+			if (prevIdx === undefined || (chunks[prevIdx].text || '').length < (c.text || '').length) frontMap.set(k, i);
+		}
+		cached = { chunks, matrix, dim, meta, frontMap };
+		log('索引已加载：' + chunks.length + ' 块' + (matrix ? '（含向量）' : '（无向量）') + '，摘要页 ' + frontMap.size + ' 篇');
 		return cached;
 	}
 
@@ -191,7 +200,7 @@ var RetrievalIndex = (function () {
 	}
 
 	// ---------------- 建索引 ----------------
-	async function build({ limit = 0 } = {}) {
+	async function build({ limit = 0, incremental = 0 } = {}) {
 		if (building) throw new Error('已有建索引任务在运行');
 		building = true;
 		cancelRequested = false;
@@ -225,7 +234,39 @@ var RetrievalIndex = (function () {
 			const chunks = [];
 			const vecs = [];
 			let done = 0, used = 0, failed = 0, truncated = 0, embedErrors = 0, dimOutProbe = 0;
-			let cacheRecovered = 0, retractedCount = 0;
+			let cacheRecovered = 0, retractedCount = 0, reused = 0;
+			const itemVersions = {};
+
+			// 增量模式：读取旧索引，按条目版本号复用未变更的块与向量
+			let prev = null;
+			if (incremental) {
+				try {
+					const metaRaw = await readText('meta.json');
+					const chunksRaw = await readText('chunks.json');
+					if (metaRaw && chunksRaw) {
+						const pm = JSON.parse(metaRaw);
+						const pc = JSON.parse(chunksRaw);
+						let rows = null;
+						const b64 = await readText('vectors.b64');
+						if (b64 && pm.dim) {
+							const bin = atob(b64);
+							rows = new Int8Array(bin.length);
+							for (let i = 0; i < bin.length; i++) rows[i] = bin.charCodeAt(i);
+						}
+						const byItem = new Map();
+						for (let i = 0; i < pc.length; i++) {
+							const c = pc[i];
+							if (!byItem.has(c.itemID)) byItem.set(c.itemID, []);
+							byItem.get(c.itemID).push(i);
+						}
+						prev = { meta: pm, chunks: pc, rows, dim: pm.dim || 0, versions: pm.itemVersions || {}, byItem };
+						log('增量模式：旧索引 ' + pc.length + ' 块，可用向量 ' + (rows ? '有' : '无'));
+					}
+				} catch (e) { log('增量读取失败，退回全量：' + e); prev = null; }
+			}
+			// 有旧向量才能复用（否则复用块会缺向量）；doEmbed 关闭时不需要向量
+			const canReuse = !!(prev && prev.rows && prev.dim) || !!(prev && !doEmbed);
+
 			for (const rec of ids) {
 				const id = rec.id;
 				if (cancelRequested) { log('用户取消'); break; }
@@ -237,6 +278,31 @@ var RetrievalIndex = (function () {
 					parent = Zotero.Items.get(item.parentItemID);
 					title = parent ? (parent.getField('title') || '') : '';
 				} catch (e) {}
+				// 增量：条目版本未变则直接复用旧块与旧向量
+				const ver = item.version || 0;
+				itemVersions[id] = ver;
+				if (prev && canReuse && prev.versions[id] === ver && prev.byItem.has(id)) {
+					for (const idx of prev.byItem.get(id)) {
+						const oc = prev.chunks[idx];
+						chunks.push({
+							cid: oc.cid, itemKey: oc.itemKey, itemID: oc.itemID,
+							parentKey: oc.parentKey || '', libraryID: oc.libraryID, title: oc.title,
+							retracted: !!oc.retracted, page: oc.page, pageSource: oc.pageSource,
+							role: oc.role || ((oc.page === 1) ? 'front' : ''),
+							text: oc.text
+						});
+						if (doEmbed && prev.dim) {
+							const row = new Float32Array(prev.dim);
+							for (let j = 0; j < prev.dim; j++) row[j] = prev.rows[idx * prev.dim + j] / 127;
+							vecs.push(row);
+						}
+					}
+					reused++; done++;
+					buildState.processed = done;
+					buildState.chunks = chunks.length;
+					buildState.phase = 'reusing';
+					continue;
+				}
 				// 1) 优先用 PDFWorker 逐页提取（有真实页码）
 				let pages = [];
 				let pageSource = 'pdf';
@@ -276,7 +342,9 @@ var RetrievalIndex = (function () {
 						cid: item.key + '#' + cs[i].page + '#' + i, itemKey: item.key, itemID: id,
 						parentKey, libraryID: rec.libraryID, title, retracted,
 						page: pageUnknown ? 0 : cs[i].page,
-						pageSource, text: cs[i].text
+						pageSource,
+						role: (!pageUnknown && cs[i].page === 1) ? 'front' : '',
+						text: cs[i].text
 					});
 				}
 				if (doEmbed && cs.length) {
@@ -305,7 +373,7 @@ var RetrievalIndex = (function () {
 			await saveIndex(chunks, vecData, dimOut, {
 				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
 				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
-				cacheRecovered, retractedPapers: retractedCount,
+				cacheRecovered, retractedPapers: retractedCount, reused, itemVersions,
 				sourceAttachments: used, failed, truncated, elapsedMs: Date.now() - t0
 			});
 			cached = null; bm25 = null; parentKeyCache.clear();
@@ -313,7 +381,7 @@ var RetrievalIndex = (function () {
 			buildState = Object.assign({}, buildState, { running: false, phase: 'done', processed: done, chunks: chunks.length, failed, cacheRecovered, retractedCount, seconds: +secs, hasVectors: !!vecData });
 			ui('建立检索索引', '完成：' + chunks.length + ' 块 / ' + used + ' 篇，用时 ' + secs + ' 秒' + (cacheRecovered ? '，缓存回填 ' + cacheRecovered : ''));
 			uiClose();
-			return { chunks: chunks.length, attachments: used, failed, truncated, cacheRecovered, retractedCount, seconds: +secs };
+			return { chunks: chunks.length, attachments: used, failed, truncated, cacheRecovered, retractedCount, reused, seconds: +secs };
 		} catch (e) {
 			buildState = Object.assign({}, buildState, { running: false, phase: 'error', error: String((e && e.message) || e) });
 			throw e;
@@ -381,6 +449,8 @@ var RetrievalIndex = (function () {
 		const ranked = [];
 		for (const [i, base] of scoreMap) ranked.push([i, base]);
 		ranked.sort((a, b) => b[1] - a[1]);
+		const posOf = new Map();
+		for (let r = 0; r < ranked.length && r < 200; r++) posOf.set(ranked[r][0], r);
 
 		const out = [];
 		const perPaper = new Map();          // 按父条目去重（同一文献多个 PDF 副本）
@@ -396,18 +466,29 @@ var RetrievalIndex = (function () {
 			const tk = titleKeyOf(c.title) || pk;   // 同标题不同条目也视为同一文献
 			const n = perPaper.get(tk) || 0;
 			if (n >= 2) continue;
-			const tkey = (c.text || '').slice(0, 120);
+			// 摘要页先验：该文献首次出现时，若其首页块也在候选池前段，则用首页块作代表段
+			// （实测案例：Barrett 2015 的综述段排第 1、摘要段仅排 18，导致 agent 拿综述段外推）
+			let emit = c;
+			if (n === 0 && idx.frontMap && idx.frontMap.has(tk)) {
+				const fi = idx.frontMap.get(tk);
+				const pos = posOf.get(fi);
+				const fc = idx.chunks[fi];
+				if (fi !== i && pos !== undefined && pos < 60 && fc && fc.text) emit = fc;
+			}
+			const tkey = (emit.text || '').slice(0, 120);
 			if (seenText.has(tkey)) continue;
 			seenText.add(tkey);
 			perPaper.set(tk, n + 1);
+			const ec = emit;
 			out.push({
-				itemKey: c.itemKey, parentKey: pk, title: c.title,
-				page: c.page ? c.page : null,
-				pageSource: c.page ? (c.pageSource || 'pdf') : 'unknown',
+				itemKey: ec.itemKey, parentKey: resolveParentKey(ec), title: ec.title,
+				page: ec.page ? ec.page : null,
+				pageSource: ec.pageSource || (ec.page ? 'pdf' : 'unknown'),
+				role: ec.role || '',
 				retracted: isRet,
-				text: (c.text || '').length > (full ? 3000 : 1200)
-					? (c.text || '').slice(0, full ? 3000 : 1200) + '…'
-					: (c.text || '')
+				text: (ec.text || '').length > (full ? 3000 : 1200)
+					? (ec.text || '').slice(0, full ? 3000 : 1200) + '…'
+					: (ec.text || '')
 			});
 		}
 		if (skippedRetracted) log('已过滤撤稿文献 ' + skippedRetracted + ' 条（includeRetracted=1 可查看）');
@@ -438,7 +519,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.8',
+					ok: true, plugin: 'retrieval-index', version: '0.1.9',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -502,8 +583,9 @@ var RetrievalIndex = (function () {
 				try {
 					if (building) return [200, 'application/json', JSON.stringify({ started: false, busy: true, build: buildState })];
 					const limit = parseInt(o.searchParams.get('limit') || '0', 10) || 0;
-					build({ limit }).catch(e => log('建索引失败：' + e));
-					return [200, 'application/json', JSON.stringify({ started: true, limit })];
+					const incremental = parseInt(o.searchParams.get('incremental') || '0', 10) || 0;
+					build({ limit, incremental }).catch(e => log('建索引失败：' + e));
+					return [200, 'application/json', JSON.stringify({ started: true, limit, incremental })];
 				} catch (e) {
 					return [500, 'application/json', JSON.stringify({ error: String((e && e.message) || e) })];
 				}
@@ -538,6 +620,16 @@ var RetrievalIndex = (function () {
 					Services.prompt.alert(null, '检索索引', '完成：' + r.chunks + ' 块 / ' + r.attachments + ' 篇附件' + (r.failed ? '，失败 ' + r.failed : '') + '，用时 ' + r.seconds + ' 秒');
 				} catch (e) {
 					Services.prompt.alert(null, '检索索引失败', String((e && e.message) || e));
+				}
+			});
+			mk('build-inc', '增量更新索引（仅处理新增/变更）', async () => {
+				try {
+					const r = await build({ incremental: 1 });
+					Services.prompt.alert(null, '增量更新',
+						'完成：' + r.chunks + ' 块（复用 ' + (r.reused || 0) + ' 篇）'
+						+ (r.failed ? '，失败 ' + r.failed : '') + '，用时 ' + r.seconds + ' 秒');
+				} catch (e) {
+					Services.prompt.alert(null, '增量更新失败', String((e && e.message) || e));
 				}
 			});
 			mk('cancel', '取消建索引', () => {
