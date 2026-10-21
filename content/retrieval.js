@@ -114,6 +114,20 @@ var RetrievalIndex = (function () {
 	}
 
 	// ---------------- Ollama ----------------
+	// Zotero 插件沙箱里可能没有 AbortController / setTimeout，统一做降级保护
+	function timeoutSignal(ms) {
+		try {
+			if (typeof AbortController === 'undefined' || typeof setTimeout === 'undefined') {
+				return { signal: undefined, clear: function () {} };
+			}
+			const ac = new AbortController();
+			const timer = setTimeout(function () { ac.abort(); }, ms);
+			return { signal: ac.signal, clear: function () { clearTimeout(timer); } };
+		} catch (e) {
+			return { signal: undefined, clear: function () {} };
+		}
+	}
+
 	function ollamaBase() {
 		return String(getPref('ollamaURL', 'http://127.0.0.1:11434')).replace(/\/+$/, '');
 	}
@@ -132,29 +146,27 @@ var RetrievalIndex = (function () {
 	}
 
 	async function embedOne(text) {
-		const ac = new AbortController();
-		const timer = setTimeout(() => ac.abort(), 20000);
+		const ts = timeoutSignal(20000);
 		try {
 			const res = await fetch(ollamaBase() + '/api/embed', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ model: getPref('model', 'bge-m3'), input: [text] }),
-				signal: ac.signal, redirect: 'error'
+				signal: ts.signal, redirect: 'error'
 			});
 			if (!res.ok) throw new Error('HTTP ' + res.status);
 			const j = await res.json();
 			return j.embeddings[0];
-		} finally { clearTimeout(timer); }
+		} finally { ts.clear(); }
 	}
 
 	async function ollamaAvailable() {
+		const ts = timeoutSignal(4000);
 		try {
-			const ac = new AbortController();
-			const t = setTimeout(() => ac.abort(), 4000);
-			const res = await fetch(ollamaBase() + '/api/tags', { signal: ac.signal });
-			clearTimeout(t);
+			const res = await fetch(ollamaBase() + '/api/tags', { signal: ts.signal });
 			return res.ok;
-		} catch (e) { return false; }
+		} catch (e) { log('Ollama 探测失败：' + (e && e.message || e)); return false; }
+		finally { ts.clear(); }
 	}
 
 	// ---------------- 进度 ----------------
@@ -323,7 +335,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.3',
+					ok: true, plugin: 'retrieval-index', version: '0.1.4',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -334,15 +346,15 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: async function (options) {
 				const url = ollamaBase() + '/api/tags';
+				const ts = timeoutSignal(8000);
 				try {
-					const ac = new AbortController();
-					const timer = setTimeout(() => ac.abort(), 8000);
-					const res = await fetch(url, { signal: ac.signal });
-					clearTimeout(timer);
+					const res = await fetch(url, { signal: ts.signal });
+					ts.clear();
 					let models = [];
 					try { const j = await res.json(); models = (j.models || []).map(m => m.name); } catch (e) {}
 					return [200, 'application/json', JSON.stringify({ ok: res.ok, url, models })];
 				} catch (e) {
+					ts.clear();
 					return [200, 'application/json', JSON.stringify({ ok: false, url, error: String((e && e.message) || e) })];
 				}
 			}
