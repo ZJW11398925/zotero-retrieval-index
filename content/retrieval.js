@@ -26,6 +26,12 @@ var RetrievalIndex = (function () {
 
 	function log(msg) { try { Zotero.debug('[retrieval] ' + msg); } catch (e) {} }
 
+	// 撤稿文献：标题通常以 "Retracted:" / "Retraction Note" 开头或包含该标记
+	const RETRACTED_RE = /(^|\s|\[|\()(retracted|retraction note|withdrawn)(\s|:|\]|\))/i;
+	function isRetractedTitle(title) {
+		return !!title && RETRACTED_RE.test(String(title));
+	}
+
 	function profilePath() {
 		const f = Services.dirsvc.get('ProfD', Ci.nsIFile);
 		return f.path;
@@ -219,31 +225,58 @@ var RetrievalIndex = (function () {
 			const chunks = [];
 			const vecs = [];
 			let done = 0, used = 0, failed = 0, truncated = 0, embedErrors = 0, dimOutProbe = 0;
+			let cacheRecovered = 0, retractedCount = 0;
 			for (const rec of ids) {
 				const id = rec.id;
 				if (cancelRequested) { log('用户取消'); break; }
 				const item = Zotero.Items.get(id);
-				if (!item || !item.isPDFAttachment() || !item.parentItemID) { done++; continue; }
+				if (!item || !item.parentItemID) { done++; continue; }
 				used++;
-				let pages = [];
+				let parent = null, title = '';
 				try {
-					const res = await Zotero.PDFWorker.getFullText(id, maxPages);
-					if (!res || !res.text) { failed++; done++; continue; }
-					if (res.totalPages > maxPages) truncated++;
-					pages = String(res.text).split('\f');
-				} catch (e) { failed++; done++; continue; }
-				let title = '';
-				try {
-					const parent = Zotero.Items.get(item.parentItemID);
+					parent = Zotero.Items.get(item.parentItemID);
 					title = parent ? (parent.getField('title') || '') : '';
 				} catch (e) {}
+				// 1) 优先用 PDFWorker 逐页提取（有真实页码）
+				let pages = [];
+				let pageSource = 'pdf';
+				if (item.isPDFAttachment()) {
+					try {
+						const res = await Zotero.PDFWorker.getFullText(id, maxPages);
+						if (res && res.text) {
+							if (res.totalPages > maxPages) truncated++;
+							pages = String(res.text).split('\f');
+						}
+					} catch (e) { log('PDF 抽取失败 ' + item.key + '：' + (e && e.message || e)); }
+				}
+				// 2) 回退：读 Zotero 全文缓存（无页码，但能救回 PDF 缺失/损坏的文献）
+				if (!pages.length) {
+					try {
+						const cachePath = Zotero.getStorageDirectory().path.replace(/[\\\/]+$/, '')
+							+ '\\' + item.key + '\\.zotero-ft-cache';
+						const txt = await Zotero.File.getContentsAsync(cachePath);
+						if (txt && txt.length > 200) {
+							pages = String(txt).split('\f');
+							pageSource = 'cache';
+							cacheRecovered++;
+						}
+					} catch (e) { /* 无缓存 */ }
+				}
+				if (!pages.length) { failed++; done++; continue; }
+				// 缓存回退且无分页符时，页码不可知
+				const pageUnknown = pageSource === 'cache' && pages.length === 1;
+				const parentKey = parent ? parent.key : '';
+				const retracted = isRetractedTitle(title);
+				if (retracted) retractedCount++;
 				let cs = [];
 				try { cs = RetrievalCore.chunkPages(pages, { chunkChars, overlapChars: 80, minChunk: 120 }); }
 				catch (e) { failed++; done++; continue; }
 				for (let i = 0; i < cs.length; i++) {
 					chunks.push({
 						cid: item.key + '#' + cs[i].page + '#' + i, itemKey: item.key, itemID: id,
-						libraryID: rec.libraryID, title, page: cs[i].page, text: cs[i].text
+						parentKey, libraryID: rec.libraryID, title, retracted,
+						page: pageUnknown ? 0 : cs[i].page,
+						pageSource, text: cs[i].text
 					});
 				}
 				if (doEmbed && cs.length) {
@@ -272,14 +305,15 @@ var RetrievalIndex = (function () {
 			await saveIndex(chunks, vecData, dimOut, {
 				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
 				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
+				cacheRecovered, retractedPapers: retractedCount,
 				sourceAttachments: used, failed, truncated, elapsedMs: Date.now() - t0
 			});
-			cached = null; bm25 = null;
+			cached = null; bm25 = null; parentKeyCache.clear();
 			const secs = ((Date.now() - t0) / 1000).toFixed(0);
-			buildState = Object.assign({}, buildState, { running: false, phase: 'done', processed: done, chunks: chunks.length, failed, seconds: +secs, hasVectors: !!vecData });
-			ui('建立检索索引', '完成：' + chunks.length + ' 块 / ' + used + ' 篇，用时 ' + secs + ' 秒');
+			buildState = Object.assign({}, buildState, { running: false, phase: 'done', processed: done, chunks: chunks.length, failed, cacheRecovered, retractedCount, seconds: +secs, hasVectors: !!vecData });
+			ui('建立检索索引', '完成：' + chunks.length + ' 块 / ' + used + ' 篇，用时 ' + secs + ' 秒' + (cacheRecovered ? '，缓存回填 ' + cacheRecovered : ''));
 			uiClose();
-			return { chunks: chunks.length, attachments: used, failed, truncated, seconds: +secs };
+			return { chunks: chunks.length, attachments: used, failed, truncated, cacheRecovered, retractedCount, seconds: +secs };
 		} catch (e) {
 			buildState = Object.assign({}, buildState, { running: false, phase: 'error', error: String((e && e.message) || e) });
 			throw e;
@@ -289,42 +323,108 @@ var RetrievalIndex = (function () {
 		}
 	}
 
+	// 用于对旧索引按需解析父条目（旧索引没有 parentKey 字段）
+	const parentKeyCache = new Map();
+	function resolveParentKey(c) {
+		if (c.parentKey) return c.parentKey;
+		const id = c.itemID;
+		if (!id) return c.itemKey;
+		if (parentKeyCache.has(id)) return parentKeyCache.get(id);
+		let pk = c.itemKey;
+		try {
+			const it = Zotero.Items.get(id);
+			if (it && it.parentItemID) {
+				const p = Zotero.Items.get(it.parentItemID);
+				if (p) pk = p.key;
+			}
+		} catch (e) {}
+		parentKeyCache.set(id, pk);
+		return pk;
+	}
+
 	// ---------------- 检索 ----------------
-	async function search({ q, k = 8, mode = 'hybrid' } = {}) {
+	async function search({ q, k = 8, mode = 'hybrid', includeRetracted = 0, full = 0 } = {}) {
 		if (!q || !String(q).trim()) throw new Error('缺少查询词 q');
 		const idx = await loadIndex();
 		if (!idx || !idx.chunks.length) throw new Error('尚未建立索引');
 		const bm = getBm25();
 		const kk = Math.max(1, Math.min(50, parseInt(k, 10) || 8));
+		const qTokens = RetrievalCore.tokenize(String(q));
+		const qSet = new Set(qTokens);
 		const rk = [];
-		rk.push(RetrievalCore.topN(RetrievalCore.bm25Score(RetrievalCore.tokenize(q), bm), 200));
+		rk.push(RetrievalCore.topN(RetrievalCore.bm25Score(qTokens, bm), 200));
 		if (mode !== 'bm25' && idx.matrix && idx.dim) {
 			try {
 				const dn = RetrievalCore.denseScores(await embedOne(String(q)), idx.matrix, idx.dim);
 				rk.push(RetrievalCore.topN(dn, 200));
 			} catch (e) { log('查询向量失败：' + e); }
 		}
-		const order = rk.length > 1 ? RetrievalCore.rrf(rk) : rk[0];
+		// RRF 融合 + 标题命中加权（改善长问句召回）
+		const scoreMap = new Map();
+		const K_RRF = 60;
+		for (const rl of rk) {
+			for (let i = 0; i < rl.length; i++) {
+				scoreMap.set(rl[i], (scoreMap.get(rl[i]) || 0) + 1 / (K_RRF + i + 1));
+			}
+		}
+		const ranked = [];
+		for (const [i, base] of scoreMap) {
+			const c = idx.chunks[i];
+			if (!c) continue;
+			let boost = 0;
+			if (qSet.size) {
+				const tt = new Set(RetrievalCore.tokenize(c.title || ''));
+				let hit = 0;
+				for (const t of qSet) if (tt.has(t)) hit++;
+				boost = 0.25 * (hit / qSet.size);   // 标题命中最多 +0.25，约等于 RRF 前 10 名的量级
+			}
+			ranked.push([i, base + boost]);
+		}
+		ranked.sort((a, b) => b[1] - a[1]);
+
 		const out = [];
-		const perPaper = new Map();
-		for (const i of order) {
+		const perPaper = new Map();          // 按父条目去重（同一文献多个 PDF 副本）
+		const seenText = new Set();          // 完全相同的片段只留一条
+		let skippedRetracted = 0;
+		for (const [i] of ranked) {
 			if (out.length >= kk) break;
 			const c = idx.chunks[i];
 			if (!c) continue;
-			const n = perPaper.get(c.itemKey) || 0;
-			if (n >= 3) continue;
-			perPaper.set(c.itemKey, n + 1);
-			out.push({ itemKey: c.itemKey, title: c.title, page: c.page, text: c.text.length > 1200 ? c.text.slice(0, 1200) + '…' : c.text });
+			const isRet = c.retracted !== undefined ? !!c.retracted : isRetractedTitle(c.title);
+			if (isRet && !includeRetracted) { skippedRetracted++; continue; }
+			const pk = resolveParentKey(c);
+			const n = perPaper.get(pk) || 0;
+			if (n >= 2) continue;
+			const tkey = (c.text || '').slice(0, 120);
+			if (seenText.has(tkey)) continue;
+			seenText.add(tkey);
+			perPaper.set(pk, n + 1);
+			out.push({
+				itemKey: c.itemKey, parentKey: pk, title: c.title,
+				page: c.page ? c.page : null,
+				pageSource: c.page ? (c.pageSource || 'pdf') : 'unknown',
+				retracted: isRet,
+				text: (c.text || '').length > (full ? 3000 : 1200)
+					? (c.text || '').slice(0, full ? 3000 : 1200) + '…'
+					: (c.text || '')
+			});
 		}
+		if (skippedRetracted) log('已过滤撤稿文献 ' + skippedRetracted + ' 条（includeRetracted=1 可查看）');
 		return out;
 	}
 
 	function stats() {
 		const out = { build: buildState, dataDir, startupError };
 		if (!cached) return Object.assign({ loaded: false }, out);
+		const pks = new Set(), retSet = new Set();
+		for (const c of cached.chunks) {
+			pks.add(c.parentKey || c.itemKey);
+			if (c.retracted !== undefined ? c.retracted : isRetractedTitle(c.title)) retSet.add(c.parentKey || c.itemKey);
+		}
 		return Object.assign({
 			loaded: true, chunks: cached.chunks.length,
-			papers: new Set(cached.chunks.map(c => c.itemKey)).size,
+			papers: pks.size,
+			retractedPapers: retSet.size,
 			hasVectors: !!cached.matrix, dim: cached.dim, meta: cached.meta
 		}, out);
 	}
@@ -337,7 +437,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.5',
+					ok: true, plugin: 'retrieval-index', version: '0.1.6',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -383,7 +483,9 @@ var RetrievalIndex = (function () {
 					const r = await search({
 						q: o.searchParams.get('q'),
 						k: o.searchParams.get('k') || 8,
-						mode: o.searchParams.get('mode') || 'hybrid'
+						mode: o.searchParams.get('mode') || 'hybrid',
+						includeRetracted: o.searchParams.get('includeRetracted') || 0,
+						full: o.searchParams.get('full') || 0
 					});
 					return [200, 'application/json', JSON.stringify(r)];
 				} catch (e) {
