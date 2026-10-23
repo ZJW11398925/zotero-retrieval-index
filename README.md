@@ -47,18 +47,52 @@ curl "http://127.0.0.1:23119/retrieval/ping"
 curl "http://127.0.0.1:23119/retrieval/build?limit=20"
 ```
 
-`/retrieval/search` 返回：
+`/retrieval/search` 返回对象（加 `?flat=1` 可退回纯数组，兼容旧脚本）：
 
 ```json
-[
-  {
-    "itemKey": "ABC123XY",
-    "title": "基于开放活动行为的深圳市高密度小学开放空间研究",
-    "page": 7,
-    "text": "……段落正文……"
-  }
-]
+{
+  "evidence": {
+    "returned": 5,
+    "papers": 4,
+    "abstractOnlySegments": 1,
+    "cacheSourcedSegments": 1,
+    "segmentsWithPage": 4,
+    "topSegmentRole": "front",
+    "retractedFiltered": 0,
+    "hints": ["部分片段无页码（来自 Zotero 全文缓存，原文 PDF 缺失）"]
+  },
+  "results": [
+    {
+      "itemKey": "ABC123XY",
+      "parentKey": "DEF456UV",
+      "title": "基于开放活动行为的深圳市高密度小学开放空间研究",
+      "page": 7,
+      "pageSource": "pdf",
+      "role": "front",
+      "retracted": false,
+      "text": "……段落正文……"
+    }
+  ]
+}
 ```
+
+### 关于「证据不足」
+
+`evidence` 只给**可核验的事实**，不给「够不够」的判定。实测三条路线都不成立：
+
+| 信号 | 实测结果 |
+|---|---|
+| 词面覆盖（查询词在片段中的命中率） | 6 个真实问题全部饱和 1.00，无区分度 |
+| 稠密余弦绝对值 | 6 题都在 0.72–0.78，区分不开直接/间接证据 |
+| 本地 qwen2.5:7b 判定 | 6 题只对 3 题，且单次 10–25 秒 |
+
+根因：这类问题不是「词没覆盖」，而是**研究对象错配**（问题是小学儿童，证据是 24 名大学生）——词面完全匹配、语义却不对，只能由阅读者判断。
+
+**建议用法**：调用方检查 `evidence`，遇到以下情况请在答案里标注局限——
+
+- `topSegmentRole` 为 `front` 或 `abstractOnlySegments` 较多 → 仅有摘要级证据
+- `segmentsWithPage` < `returned` → 部分片段无页码
+- 片段的研究样本/场景与问题对象不一致 → 间接证据
 
 ## 向量检索（可选）
 
