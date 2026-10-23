@@ -593,12 +593,20 @@ var RetrievalIndex = (function () {
 	}
 
 	// ---------------- 检索 ----------------
-	async function search({ q, k = 8, mode = 'hybrid', includeRetracted = 0, full = 0 } = {}) {
+	async function search({ q, k = 8, mode = 'hybrid', includeRetracted = 0, full = 0, includeOrphans = null } = {}) {
 		if (!q || !String(q).trim()) throw new Error('缺少查询词 q');
 		const idx = await loadIndex();
 		if (!idx || !idx.chunks.length) throw new Error('尚未建立索引');
 		const bm = getBm25();
 		const kk = Math.max(1, Math.min(50, parseInt(k, 10) || 8));
+		let useOrphans = true;
+		try {
+			const v = Zotero.Prefs.get(PREF('includeOrphans'), true);
+			if (v !== undefined && v !== null) useOrphans = !!v;
+		} catch (e) {}
+		if (includeOrphans !== null && includeOrphans !== undefined && includeOrphans !== '') {
+			useOrphans = !(includeOrphans === 0 || includeOrphans === '0' || includeOrphans === false);
+		}
 		const qTokens = RetrievalCore.tokenize(String(q));
 		const qSet = new Set(qTokens);
 		const rk = [];
@@ -629,7 +637,7 @@ var RetrievalIndex = (function () {
 		const out = [];
 		const perPaper = new Map();          // 按父条目去重（同一文献多个 PDF 副本）
 		const seenText = new Set();          // 完全相同的片段只留一条
-		let skippedRetracted = 0;
+		let skippedRetracted = 0, skippedOrphans = 0;
 		for (let pass = 1; pass <= 2; pass++) {
 		for (const [i] of ranked) {
 			if (out.length >= kk) break;
@@ -637,6 +645,7 @@ var RetrievalIndex = (function () {
 			if (!c) continue;
 			const isRet = c.retracted !== undefined ? !!c.retracted : isRetractedTitle(c.title);
 			if (isRet && !includeRetracted) { skippedRetracted++; continue; }
+			if (!useOrphans && c.orphan) { skippedOrphans++; continue; }
 			const pk = resolveParentKey(c);
 			const ctitle = cleanTitle(c.title);
 			if (pass === 1 && titlePoor(c.title)) continue;   // 第一轮跳过低信息量标题
@@ -701,6 +710,8 @@ var RetrievalIndex = (function () {
 			segmentsWithPage: pageKnown,
 			topSegmentRole: out.length ? (out[0].role || 'body') : null,
 			retractedFiltered: skippedRetracted,
+			orphansIncluded: useOrphans,
+			orphansFiltered: skippedOrphans,
 			hints: []
 		};
 		if (out.length && evidence.segmentsWithPage < out.length) {
@@ -739,7 +750,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.16',
+					ok: true, plugin: 'retrieval-index', version: '0.1.17',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -808,7 +819,8 @@ var RetrievalIndex = (function () {
 						k: o.searchParams.get('k') || 8,
 						mode: o.searchParams.get('mode') || 'hybrid',
 						includeRetracted: o.searchParams.get('includeRetracted') || 0,
-						full: o.searchParams.get('full') || 0
+						full: o.searchParams.get('full') || 0,
+						includeOrphans: o.searchParams.get('orphans')
 					});
 					const flat = parseInt(o.searchParams.get('flat') || '0', 10);
 					return [200, 'application/json', JSON.stringify(flat ? r.results : r)];
