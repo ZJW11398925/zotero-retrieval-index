@@ -102,6 +102,47 @@ curl "http://127.0.0.1:23119/retrieval/build?limit=20"
 ollama pull bge-m3
 ```
 
+## OCR（处理无文本层的扫描件）
+
+插件**不内置 OCR 引擎**（WASM 方案体积大、中文模型数十 MB），改为「外部脚本生成旁路文本 + 插件读取」：
+
+```bash
+# 首次：扫库找候选（约 2 分钟）
+python tools/ocr_helper.py --scan --dry-run
+
+# 只处理中文文档，最多 1000 页（推荐：先跑一小批验证）
+python tools/ocr_helper.py --scan --probe-lang --budget-pages 1000
+
+# 只补空白页（文献已有部分文本层）
+python tools/ocr_helper.py --scan --only-blank
+
+# 处理完 → Zotero 工具菜单「增量更新索引」
+```
+
+产物写入 `<索引目录>/ocr/`：`_manifest.json` 与 `<itemKey>.json`（`{"pages":[...], "ocrPages":[...]}`，保留页分隔，**仍有真实页码**）。
+
+### 引擎与语言
+
+使用 **Windows 内置 OCR**（`Windows.Media.Ocr`），零外部依赖。需要对应的 OCR 语言包：
+
+```powershell
+Get-WindowsCapability -Online -Name 'Language.OCR*'   # 查看已装语言
+```
+
+- **中文（zh-CN）效果良好**：实测扫描版期刊每页 2000–3000 字，可读，个别错字（"趼究"→"研究"）不影响检索
+- **韩文/日文目前不支持**：本机只装了 zh-CN，`--probe-lang` 会先 OCR 首页探测文字系统，自动跳过韩/日文档（否则会写入乱码污染索引）
+- 需要韩/日文时，安装对应语言包（`Add-WindowsCapability -Online -Name 'Language.OCR~~~ko-KR~0.0.1.0'`，需联网）
+
+### 规模参考（本机 852 个 PDF / 30,470 页）
+
+| 类别 | 篇数 | 页数 | 说明 |
+|---|---|---|---|
+| 完全无文本层 | 70 | 8,896 | 需整篇 OCR；其中相当比例是韩/日文扫描件 |
+| 部分空白页 | 149 | 2,124 | 可只补空白页 |
+| 空白页占比 | — | 36.1% | 含大量封面/插图页，按需处理 |
+
+Windows OCR 约 **2.3 秒/页**（200 dpi），1,000 页约 38 分钟。
+
 ## 配置
 
 设置 → 高级 → 配置编辑器：
