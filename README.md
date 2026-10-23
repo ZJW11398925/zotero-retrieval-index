@@ -132,6 +132,19 @@ python tools/smoke_test.py --freeze   # 确认新排序可接受后，更新黄�
 - WARN（退出码 0）：排序漂移 / top1 变化，只提示不误判
 - 已在 8 类故障注入下实测：错误端口、服务挂起、搜索挂起、预算耗尽、非 JSON、空结果、耗时超标、块数不足
 
+## 团队分发（内部）
+
+把「插件 + 索引快照 + 部署/自检脚本 + 使用说明」打成一个 zip，队友免建索引、免 OCR、免 Ollama：
+
+```bash
+python tools/pack_team_kit.py --out-dir D:\zotero\dist
+# 产物：retrieval-index-team-kit-v<版本>-<日期>.zip（v0.1.23 / 52,298 块 → 约 54 MB）
+```
+
+- 约定：**所内私有网盘/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
+- 队友三步：设 `xpinstall.signatures.required=false` → 装 xpi 重启 → 关 Zotero 跑 `deploy_index.ps1 -Force`，再跑 `verify_install.ps1`（17 项自检）
+- kit 源文件在 `tools/team-kit/`（部署脚本、校验脚本、使用说明），打包脚本会注入快照日期并生成 SHA256 清单
+
 ## 向量检索（可选）
 
 装了 [Ollama](https://ollama.com) 并拉取模型后会自动启用；检测不到则退化为纯 BM25，其余功能不受影响。
