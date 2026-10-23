@@ -21,6 +21,7 @@
   ocr/<itemKey>.json      {"pages": ["第1页文本", ...], "ocrPages": [1,3,...]}
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -118,6 +119,31 @@ def find_pdf(item_key):
     return None
 
 
+def scan_storage(dpi_hint=''):
+    """不依赖插件统计，直接扫 storage 找“无文本”PDF（无需先跑一次全量重建）"""
+    import pymupdf
+    no_text, partial = [], []
+    for d in glob.glob(os.path.join(STORAGE, '*')):
+        pdfs = glob.glob(os.path.join(d, '*.pdf'))
+        if not pdfs:
+            continue
+        key = os.path.basename(d)
+        try:
+            doc = pymupdf.open(pdfs[0])
+            n = len(doc)
+            texts = [doc[i].get_text() for i in range(n)]
+            doc.close()
+        except Exception:
+            continue
+        chars = sum(len((t or '').replace(' ', '')) for t in texts)
+        blanks = [i + 1 for i, t in enumerate(texts) if len((t or '').replace(' ', '')) < 50]
+        if chars < 500:
+            no_text.append({'itemKey': key, 'title': os.path.basename(pdfs[0])[:70], 'pages': n})
+        elif blanks and len(blanks) < n:
+            partial.append({'itemKey': key, 'pages': blanks})
+    return no_text, partial
+
+
 def ocr_pdf(pdf_path, ps_script, only_pages=None, fallback_texts=None, min_chars=50, dpi=200):
     """返回 (pages, ocr_pages)。only_pages=None 表示整篇 OCR。"""
     import pymupdf
@@ -152,18 +178,54 @@ def ocr_pdf(pdf_path, ps_script, only_pages=None, fallback_texts=None, min_chars
     return pages, ocr_pages
 
 
+def script_ratio(text):
+    """返回 (中文占比, 韩文占比, 日文假名占比)——按字符数估算"""
+    import unicodedata
+    if not text:
+        return 0.0, 0.0, 0.0
+    han = hangul = kana = total = 0
+    for ch in text:
+        o = ord(ch)
+        if ch.isspace() or unicodedata.category(ch).startswith('P'):
+            continue
+        total += 1
+        if 0xAC00 <= o <= 0xD7A3:
+            hangul += 1
+        elif 0x3040 <= o <= 0x30FF:
+            kana += 1
+        elif 0x4E00 <= o <= 0x9FFF:
+            han += 1
+    if not total:
+        return 0.0, 0.0, 0.0
+    return han / total, hangul / total, kana / total
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--only-blank', action='store_true', help='只补空白页')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--dpi', type=int, default=200)
+    ap.add_argument('--scan', action='store_true', help='不依赖插件统计，直接扫 storage 找候选')
+    ap.add_argument('--keys', default='', help='逗号分隔的 itemKey，限定只处理这些')
+    ap.add_argument('--max-pages', type=int, default=0, help='每篇最多 OCR 前 N 页（0=全部）')
+    ap.add_argument('--probe-lang', action='store_true',
+                    help='先 OCR 首页探测文字系统，只处理中文为主的文献（跳过韩/日文）')
+    ap.add_argument('--budget-pages', type=int, default=0, help='累计 OCR 页数上限（0=不限）')
     args = ap.parse_args()
 
-    data = fetch_candidates()
-    ocr_dir = data['ocrDir']
-    failed = data.get('failed') or []
-    blank = data.get('blankPages') or {}
+    want = set(k.strip() for k in args.keys.split(',') if k.strip())
+    if args.scan:
+        print('扫描 storage（约 2 分钟）...')
+        failed, blank_list = scan_storage()
+        blank = {it['itemKey']: it['pages'] for it in blank_list}
+        ocr_dir = os.path.join(os.environ['APPDATA'], 'Zotero', 'Zotero', 'Profiles',
+                               'xs8xzls2.default', 'retrieval-index', 'ocr')
+    else:
+        data = fetch_candidates()
+        ocr_dir = data['ocrDir']
+        failed = data.get('failed') or []
+        blank = data.get('blankPages') or {}
 
     jobs = {}
     if not args.only_blank:
@@ -173,6 +235,9 @@ def main():
         if k in jobs:
             continue
         jobs[k] = {'mode': 'blank', 'pages': pages, 'title': ''}
+
+    if want:
+        jobs = {k: v for k, v in jobs.items() if k in want}
 
     print('候选：整篇无文本 %d 篇 / 含空白页 %d 篇 → 合计 %d 篇' % (len(failed), len(blank), len(jobs)))
     if args.limit:
@@ -194,6 +259,8 @@ def main():
 
     ps_script = make_ps_script()
     ok = skipped = failed_n = 0
+    pages_done = 0
+    lang_skipped = []
     t_all = time.time()
     for idx, (key, job) in enumerate(jobs.items(), 1):
         pdf = find_pdf(key)
@@ -201,10 +268,42 @@ def main():
             print('  [%d/%d] %s 跳过：找不到 PDF' % (idx, len(jobs), key))
             skipped += 1
             continue
+        if args.budget_pages and pages_done >= args.budget_pages:
+            print('  已达页数预算 %d，停止' % args.budget_pages)
+            break
         t0 = time.time()
         try:
+            # 语言探测：只处理中文为主的文献（zh-CN 引擎读不了韩/日）
+            if args.probe_lang:
+                import pymupdf as _pm2
+                _dp = _pm2.open(pdf)
+                _png = os.path.join(TMP, 'probe_%s.png' % key)
+                _dp[0].get_pixmap(dpi=args.dpi).save(_png)
+                _dp.close()
+                try:
+                    _ptxt = clean(ocr_image(ps_script, _png))
+                finally:
+                    try:
+                        os.remove(_png)
+                    except OSError:
+                        pass
+                han, hangul, kana = script_ratio(_ptxt)
+                if hangul > 0.15 or kana > 0.10 or han < 0.25:
+                    lang_skipped.append({'key': key, 'han': round(han, 2),
+                                         'hangul': round(hangul, 2), 'kana': round(kana, 2)})
+                    print('  [%d/%d] %s 跳过：非中文文档（汉%.2f 韩%.2f 假名%.2f）' % (
+                        idx, len(jobs), key, han, hangul, kana))
+                    skipped += 1
+                    continue
             if job['mode'] == 'full':
-                pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=None, dpi=args.dpi)
+                only = None
+                if args.max_pages > 0:
+                    import pymupdf as _pm
+                    _d = _pm.open(pdf)
+                    _n = min(args.max_pages, len(_d))
+                    _d.close()
+                    only = set(range(1, _n + 1))
+                pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=only, dpi=args.dpi)
             else:
                 pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=set(job['pages']), dpi=args.dpi)
             out = os.path.join(ocr_dir, key + '.json')
@@ -212,6 +311,7 @@ def main():
                 json.dump({'pages': pages, 'ocrPages': ocr_pages}, f, ensure_ascii=False)
             if key not in keys:
                 keys.append(key)
+            pages_done += len(pages)
             ok += 1
             print('  [%d/%d] %s %s：%d 页，OCR %d 页，%ds → %s' % (
                 idx, len(jobs), key, job['mode'], len(pages), len(ocr_pages),
@@ -223,8 +323,11 @@ def main():
     with open(manifest_path, 'w', encoding='utf-8') as f:
         json.dump({'keys': keys, 'generatedAt': time.strftime('%Y-%m-%dT%H:%M:%S')}, f, ensure_ascii=False)
 
-    print('\n完成：成功 %d / 跳过 %d / 失败 %d，总耗时 %ds' % (
-        ok, skipped, failed_n, int(time.time() - t_all)))
+    print('\n完成：成功 %d / 跳过 %d（其中非中文 %d）/ 失败 %d，累计 OCR %d 页，总耗时 %ds' % (
+        ok, skipped, len(lang_skipped), failed_n, pages_done, int(time.time() - t_all)))
+    if lang_skipped:
+        print('非中文跳过清单（zh-CN 引擎读不了韩/日文）：%s' % (
+            ', '.join(x['key'] for x in lang_skipped[:20]) + (' …' if len(lang_skipped) > 20 else '')))
     print('旁路目录：%s' % ocr_dir)
     print('下一步：Zotero → 工具 → 增量更新索引（或 GET /retrieval/build?incremental=1）')
 
