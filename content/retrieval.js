@@ -230,8 +230,26 @@ var RetrievalIndex = (function () {
 		try { if (progressWin) { progressWin.startCloseTimer(4000); progressWin = null; } } catch (e) {}
 	}
 
+	// 简单字符串哈希（用于 OCR 清单指纹）
+	function hashStr(s) {
+		let h = 5381;
+		for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+		return h.toString(36);
+	}
+
+	function allowedLibraryIDs() {
+		const raw = String(getPref('libraryIDs', '') || '').trim();
+		if (!raw) return null;
+		const set = new Set();
+		for (const part of raw.split(/[,，\s]+/)) {
+			const n = parseInt(part, 10);
+			if (!isNaN(n)) set.add(n);
+		}
+		return set.size ? set : null;
+	}
+
 	// ---------------- 建索引 ----------------
-	async function build({ limit = 0, incremental = 0, embedOnly = 0 } = {}) {
+	async function build({ limit = 0, incremental = 0, embedOnly = 0, silent = 0 } = {}) {
 		if (building) throw new Error('已有建索引任务在运行');
 		building = true;
 		cancelRequested = false;
@@ -293,7 +311,9 @@ var RetrievalIndex = (function () {
 				return { chunks: ex.length, embedErrors, seconds: +secsE, embedOnly: true };
 			}
 			// 扫描全部可访问库（个人库 + 群组库），否则会漏掉群组库里的文献
-			const libs = Zotero.Libraries.getAll().filter(l => l.libraryType === 'user' || l.libraryType === 'group');
+			const allow = allowedLibraryIDs();
+			const libs = Zotero.Libraries.getAll().filter(l =>
+				(l.libraryType === 'user' || l.libraryType === 'group') && (!allow || allow.has(l.libraryID)));
 			const libraries = [];
 			let ids = [];
 			for (const lib of libs) {
@@ -310,11 +330,41 @@ var RetrievalIndex = (function () {
 			}
 			if (limit > 0) ids = ids.slice(0, limit);
 			buildState.total = ids.length;
+
+			// OCR 清单参与指纹（避免只改了 OCR 却被判为无变更）
+			const ocrManifestForFp = (await readAbs(dataDir + '\\ocr\\_manifest.json')) || '';
+			// 快速指纹：附件数 + 版本和 + 最大版本 + OCR 清单哈希
+			let verSum = 0, verMax = 0, verCount = 0;
+			for (const rec of ids) {
+				try {
+					const it = Zotero.Items.get(rec.id);
+					const v = (it && it.version) || 0;
+					verSum += v; if (v > verMax) verMax = v; verCount++;
+				} catch (e) {}
+			}
+			const fingerprint = [verCount, verSum, verMax, hashStr(ocrManifestForFp)].join('|');
+
+			if (incremental) {
+				const prevMetaRaw = await readText('meta.json');
+				if (prevMetaRaw) {
+					try {
+						const pm = JSON.parse(prevMetaRaw);
+						if (pm.fingerprint && pm.fingerprint === fingerprint) {
+							log('指纹一致，无变更，跳过（' + fingerprint + '）');
+							buildState = Object.assign({}, buildState, {
+								running: false, phase: 'done', noChange: true, fingerprint,
+								chunks: pm.count || 0, seconds: 0
+							});
+							return { chunks: pm.count || 0, noChange: true, seconds: 0 };
+						}
+					} catch (e) {}
+				}
+			}
 			const maxPages = parseInt(getPref('maxPagesPerItem', 80), 10);
 			const chunkChars = parseInt(getPref('chunkChars', 520), 10);
 			const doEmbed = await ollamaAvailable();
 			if (!doEmbed) log('未检测到 Ollama，本次仅建立 BM25 索引（探测 ' + ollamaBase() + '/api/tags；若本机开了全局代理，需把 127.0.0.1 加入代理例外）');
-			ui('建立检索索引', '共 ' + ids.length + ' 个附件（' + libraries.map(l => l.name + ':' + l.attachments).join('，') + '）；向量化：' + (doEmbed ? '开启' : '关闭'));
+			if (!silent) ui('建立检索索引', '共 ' + ids.length + ' 个附件（' + libraries.map(l => l.name + ':' + l.attachments).join('，') + '）；向量化：' + (doEmbed ? '开启' : '关闭'));
 
 			const chunks = [];
 			const vecs = [];
@@ -352,13 +402,21 @@ var RetrievalIndex = (function () {
 							rows = new Int8Array(bin.length);
 							for (let i = 0; i < bin.length; i++) rows[i] = bin.charCodeAt(i);
 						}
+						// 按 itemKey 分组（字符串 key 跨机器一致；itemID 是本机整数，不可移植）
 						const byItem = new Map();
 						for (let i = 0; i < pc.length; i++) {
 							const c = pc[i];
-							if (!byItem.has(c.itemID)) byItem.set(c.itemID, []);
-							byItem.get(c.itemID).push(i);
+							const k = c.itemKey || String(c.itemID);
+							if (!byItem.has(k)) byItem.set(k, []);
+							byItem.get(k).push(i);
 						}
-						prev = { meta: pm, chunks: pc, rows, dim: pm.dim || 0, versions: pm.itemVersions || {}, byItem };
+						const pv = pm.itemVersions || {};
+						// 兼容旧索引（itemVersions 以数字 itemID 为键）
+						const versionsByKey = {};
+						for (const c of pc) {
+							if (c.itemKey) versionsByKey[c.itemKey] = pv[c.itemID] !== undefined ? pv[c.itemID] : pv[c.itemKey];
+						}
+						prev = { meta: pm, chunks: pc, rows, dim: pm.dim || 0, versions: versionsByKey, byItem };
 						log('增量模式：旧索引 ' + pc.length + ' 块，可用向量 ' + (rows ? '有' : '无'));
 					}
 				} catch (e) { log('增量读取失败，退回全量：' + e); prev = null; }
@@ -388,12 +446,13 @@ var RetrievalIndex = (function () {
 				} catch (e) {}
 				// 增量：条目版本未变则直接复用旧块与旧向量
 				const ver = item.version || 0;
-				itemVersions[id] = ver;
+				itemVersions[item.key] = ver;
 				const hasOcr = ocrKeys.has(item.key);
 				const prevOcrUsed = (prev && prev.meta && prev.meta.ocrUsedKeys) || [];
 				const ocrNew = hasOcr && prevOcrUsed.indexOf(item.key) === -1;
-				if (prev && canReuse && !ocrNew && prev.versions[id] === ver && prev.byItem.has(id)) {
-					for (const idx of prev.byItem.get(id)) {
+				const prevVer = prev && prev.versions ? prev.versions[item.key] : undefined;
+				if (prev && canReuse && !ocrNew && (prevVer === undefined ? false : prevVer === ver) && prev.byItem.has(item.key)) {
+					for (const idx of prev.byItem.get(item.key)) {
 						const oc = prev.chunks[idx];
 						chunks.push({
 							cid: oc.cid, itemKey: oc.itemKey, itemID: oc.itemID,
@@ -505,7 +564,7 @@ var RetrievalIndex = (function () {
 				buildState.failed = failed;
 				buildState.phase = 'extracting';
 				if (done % 20 === 0) {
-					ui('建立检索索引', done + '/' + ids.length + ' 附件，' + chunks.length + ' 块');
+					if (!silent) ui('建立检索索引', done + '/' + ids.length + ' 附件，' + chunks.length + ' 块');
 					await Zotero.Promise.delay(0);
 				}
 			}
@@ -540,6 +599,7 @@ var RetrievalIndex = (function () {
 			retractedCount = statRetracted;
 			await saveIndex(chunks, vecData, dimOut, {
 				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
+				fingerprint, indexSchema: 2,
 				orphanChunks: statOrphan, ocrChunks: statOcrChunks, cacheChunks: statCache,
 				parents: statParents.size, papersById: statPapers.size,
 				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
@@ -550,7 +610,7 @@ var RetrievalIndex = (function () {
 			cached = null; bm25 = null; parentKeyCache.clear();
 			const secs = ((Date.now() - t0) / 1000).toFixed(0);
 			buildState = Object.assign({}, buildState, { running: false, phase: 'done', processed: done, chunks: chunks.length, failed, cacheRecovered, retractedCount, seconds: +secs, hasVectors: !!vecData });
-			ui('建立检索索引', '完成：' + chunks.length + ' 块 / ' + used + ' 篇，用时 ' + secs + ' 秒' + (cacheRecovered ? '，缓存回填 ' + cacheRecovered : ''));
+			if (!silent) ui('建立检索索引', '完成：' + chunks.length + ' 块 / ' + used + ' 篇，用时 ' + secs + ' 秒' + (cacheRecovered ? '，缓存回填 ' + cacheRecovered : ''));
 			uiClose();
 			return { chunks: chunks.length, attachments: used, failed, truncated, cacheRecovered, retractedCount, reused, seconds: +secs };
 		} catch (e) {
@@ -769,7 +829,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.18',
+					ok: true, plugin: 'retrieval-index', version: '0.1.19',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -954,6 +1014,29 @@ var RetrievalIndex = (function () {
 			catch (e) { startupError = '创建数据目录失败：' + (e.message || e); log(startupError); }
 			addMenuItems();
 			log('初始化完成 dataDir=' + dataDir);
+			// 自动增量：启动后延迟执行；可配置周期
+			try {
+				const autoOn = String(getPref('autoIncremental', 1)) !== '0' && !!getPref('autoIncremental', 1);
+				if (autoOn) {
+					const delayMs = parseInt(getPref('autoIncrementalDelaySec', 90), 10) * 1000;
+					const everyMin = parseInt(getPref('autoIncrementalMinutes', 0), 10);
+					(async () => {
+						await Zotero.Promise.delay(Math.max(10000, delayMs));
+						try {
+							const r = await build({ incremental: 1, silent: 1 });
+							log('自动增量完成：' + (r && r.noChange ? '无变更' : (r.chunks + ' 块')));
+						} catch (e) { log('自动增量失败：' + (e && e.message || e)); }
+						if (everyMin > 0) {
+							while (true) {
+								await Zotero.Promise.delay(everyMin * 60000);
+								try { await build({ incremental: 1, silent: 1 }); }
+								catch (e) { log('周期增量失败：' + (e && e.message || e)); }
+							}
+						}
+					})();
+					log('已启用自动增量（延迟 ' + (delayMs / 1000) + ' 秒' + (everyMin ? '，每 ' + everyMin + ' 分钟' : '') + '）');
+				}
+			} catch (e) { log('自动增量注册失败：' + e); }
 		} catch (e) {
 			startupError = String((e && e.message) || e);
 			log('初始化异常：' + startupError);
