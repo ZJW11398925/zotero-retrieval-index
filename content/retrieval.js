@@ -583,6 +583,47 @@ var RetrievalIndex = (function () {
 				vecData = packed.data; dimOut = packed.dim;
 				log('向量不齐，已补零 ' + pad + ' 条');
 			}
+			// 跨库内容去重：同一篇文献若在多个库都被建了块，只保留优先级最高库的那份
+			// （实测：色彩偏好组 64 篇里有 62 篇与 SIT 正文相同，标题形态不同导致检索时无法去重）
+			let crossLibDropped = 0;
+			if (chunks.length && vecs.length === chunks.length) {
+				const prio = String(getPref('libraryPriority', '3,1,2')).split(/[,，\s]+/).map(x => parseInt(x, 10)).filter(x => !isNaN(x));
+				const rankOf = lib => { const i = prio.indexOf(lib); return i < 0 ? 999 : i; };
+				const sigMap = new Map();   // sig -> {best: rank, keepIdx: [...], dropIdx: [...]}
+				for (let i = 0; i < chunks.length; i++) {
+					const c = chunks[i];
+					const txt = String(c.text || '').replace(/\s+/g, '').slice(0, 1200);
+					if (!txt) continue;
+					let h = 5381;
+					for (let j = 0; j < txt.length; j++) h = ((h * 33) ^ txt.charCodeAt(j)) >>> 0;
+					const key = h.toString(36) + '|' + txt.length;
+					const r = rankOf(c.libraryID);
+					let rec = sigMap.get(key);
+					if (!rec) { rec = { best: r, keep: [i], drop: [] }; sigMap.set(key, rec); }
+					else if (r < rec.best) { rec.drop.push(...rec.keep); rec.keep = [i]; rec.best = r; }
+					else rec.drop.push(i);
+				}
+				const dropSet = new Set();
+				for (const rec of sigMap.values()) for (const d of rec.drop) dropSet.add(d);
+				if (dropSet.size) {
+					const keptChunks = [], keptVecs = [];
+					for (let i = 0; i < chunks.length; i++) {
+						if (dropSet.has(i)) continue;
+						keptChunks.push(chunks[i]); keptVecs.push(vecs[i]);
+					}
+					crossLibDropped = dropSet.size;
+					chunks.length = 0; chunks.push(...keptChunks);
+					vecs.length = 0; vecs.push(...keptVecs);
+					log('跨库去重：丢弃 ' + crossLibDropped + ' 块，保留 ' + chunks.length + ' 块');
+				}
+			}
+			// 跨库去重后必须重新打包向量（否则 chunks 与 vectors 顺序错位）
+			if (crossLibDropped > 0 && vecs.length && vecs.length === chunks.length) {
+				const packed2 = RetrievalCore.packVectors(vecs);
+				vecData = packed2.data; dimOut = packed2.dim;
+				log('去重后重新打包向量：' + chunks.length + ' 行');
+			}
+
 			// 从最终 chunks 重新统计（增量构建时单次计数会失真）
 			let statOrphan = 0, statOcrChunks = 0, statRetracted = 0, statCache = 0;
 			const statParents = new Set(), statPapers = new Set();
@@ -599,7 +640,7 @@ var RetrievalIndex = (function () {
 			retractedCount = statRetracted;
 			await saveIndex(chunks, vecData, dimOut, {
 				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
-				fingerprint, indexSchema: 2,
+				fingerprint, indexSchema: 2, crossLibDropped,
 				orphanChunks: statOrphan, ocrChunks: statOcrChunks, cacheChunks: statCache,
 				parents: statParents.size, papersById: statPapers.size,
 				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
@@ -829,7 +870,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.19',
+					ok: true, plugin: 'retrieval-index', version: '0.1.20',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
