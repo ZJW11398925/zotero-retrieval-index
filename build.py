@@ -21,13 +21,37 @@ INCLUDE = [
     'README.md',
     'LICENSE',
     'content/core.js',
+    'content/protocol-text.js',
     'content/retrieval.js',
     'chrome/content/icons/favicon.png',
     'chrome/content/icons/favicon@0.5x.png',
 ]
 
+PROTOCOL_SRC = 'docs/agent-usage-protocol.md'
+PROTOCOL_OUT = 'content/protocol-text.js'
+
+
+def gen_protocol_text():
+    """把 docs/agent-usage-protocol.md 生成 content/protocol-text.js（单一事实源，勿手改产物）。
+
+    生成物形如： var RETRIEVAL_PROTOCOL_MD = "……";
+    bootstrap.js 用 loadSubScript 载入，/retrieval/protocol 接口返回。
+    """
+    src = os.path.join(ROOT, PROTOCOL_SRC.replace('/', os.sep))
+    out = os.path.join(ROOT, PROTOCOL_OUT.replace('/', os.sep))
+    if not os.path.exists(src):
+        raise SystemExit('缺少协议源文件：' + PROTOCOL_SRC)
+    md = open(src, encoding='utf-8').read()
+    js = ('// 由 build.py 从 ' + PROTOCOL_SRC + ' 自动生成，请勿手改。\n'
+          'var RETRIEVAL_PROTOCOL_MD = ' + json.dumps(md, ensure_ascii=False) + ';\n')
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(js)
+    print('已生成 %s（%d 字符）' % (PROTOCOL_OUT, len(md)))
+
 
 def main():
+    gen_protocol_text()
     manifest = json.load(open(os.path.join(ROOT, 'manifest.json'), encoding='utf-8'))
     version = manifest['version']
     plugin_id = manifest['applications']['zotero']['id']

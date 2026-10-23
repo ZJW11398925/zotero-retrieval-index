@@ -583,13 +583,16 @@ var RetrievalIndex = (function () {
 				vecData = packed.data; dimOut = packed.dim;
 				log('向量不齐，已补零 ' + pad + ' 条');
 			}
-			// 跨库内容去重：同一篇文献若在多个库都被建了块，只保留优先级最高库的那份
-			// （实测：色彩偏好组 64 篇里有 62 篇与 SIT 正文相同，标题形态不同导致检索时无法去重）
+			// 重复正文去重：同一篇文献若在多个库、或同一库的多个副本都被建了块，只保留一份。
+			// 判据 = 正文前 1200 字（去空白）指纹。
+			// 保留顺序：① 库优先级（libraryPriority，默认 3>1>2）② 非孤立附件优先 ③ 先到先得。
+			// v0.1.23 修复：①② 相同（常见于同库重复）时原先按"块数组先到"保留，会把孤儿副本留下、
+			// 把有父条目的正规副本删掉——实测导致 2 条评估金标 itemKey 定位失败、orphan/parent 统计错乱。
 			let crossLibDropped = 0;
 			if (chunks.length && vecs.length === chunks.length) {
 				const prio = String(getPref('libraryPriority', '3,1,2')).split(/[,，\s]+/).map(x => parseInt(x, 10)).filter(x => !isNaN(x));
 				const rankOf = lib => { const i = prio.indexOf(lib); return i < 0 ? 999 : i; };
-				const sigMap = new Map();   // sig -> {best: rank, keepIdx: [...], dropIdx: [...]}
+				const sigMap = new Map();   // sig -> {rank, orph, keep:[i], drop:[i]}
 				for (let i = 0; i < chunks.length; i++) {
 					const c = chunks[i];
 					const txt = String(c.text || '').replace(/\s+/g, '').slice(0, 1200);
@@ -598,9 +601,12 @@ var RetrievalIndex = (function () {
 					for (let j = 0; j < txt.length; j++) h = ((h * 33) ^ txt.charCodeAt(j)) >>> 0;
 					const key = h.toString(36) + '|' + txt.length;
 					const r = rankOf(c.libraryID);
+					const o = c.orphan ? 1 : 0;            // 0 = 有父条目（更优，优先保留）
 					let rec = sigMap.get(key);
-					if (!rec) { rec = { best: r, keep: [i], drop: [] }; sigMap.set(key, rec); }
-					else if (r < rec.best) { rec.drop.push(...rec.keep); rec.keep = [i]; rec.best = r; }
+					if (!rec) { rec = { rank: r, orph: o, keep: [i], drop: [] }; sigMap.set(key, rec); }
+					else if (r < rec.rank || (r === rec.rank && o < rec.orph)) {
+						rec.drop.push(...rec.keep); rec.keep = [i]; rec.rank = r; rec.orph = o;
+					}
 					else rec.drop.push(i);
 				}
 				const dropSet = new Set();
@@ -614,7 +620,7 @@ var RetrievalIndex = (function () {
 					crossLibDropped = dropSet.size;
 					chunks.length = 0; chunks.push(...keptChunks);
 					vecs.length = 0; vecs.push(...keptVecs);
-					log('跨库去重：丢弃 ' + crossLibDropped + ' 块，保留 ' + chunks.length + ' 块');
+					log('重复正文去重：丢弃 ' + crossLibDropped + ' 块，保留 ' + chunks.length + ' 块');
 				}
 			}
 			// 跨库去重后必须重新打包向量（否则 chunks 与 vectors 顺序错位）
@@ -870,7 +876,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.22',
+					ok: true, plugin: 'retrieval-index', version: '0.1.23',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -1072,6 +1078,29 @@ var RetrievalIndex = (function () {
 			}
 		};
 
+		// Agent 使用协议：让 agent 一条 curl 自举用法。
+		// 正文由 build.py 从 docs/agent-usage-protocol.md 生成到 content/protocol-text.js（勿手改）。
+		Zotero.Server.Endpoints['/retrieval/protocol'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/protocol'].prototype = {
+			supportedMethods: ['GET'],
+			init: function (o) {
+				let md = '';
+				try { md = (typeof RETRIEVAL_PROTOCOL_MD === 'string') ? RETRIEVAL_PROTOCOL_MD : ''; } catch (e) {}
+				if (!md) {
+					return [503, 'application/json', JSON.stringify({
+						ok: false,
+						error: '协议文本未打包：请在源码目录运行 python build.py 后重新安装',
+						docPath: 'docs/agent-usage-protocol.md'
+					})];
+				}
+				const fmt = (o && o.searchParams && o.searchParams.get('format')) || 'md';
+				if (fmt === 'json') {
+					return [200, 'application/json', JSON.stringify({ ok: true, version: '0.1.23', format: 'markdown', chars: md.length, protocol: md })];
+				}
+				return [200, 'text/markdown; charset=utf-8', md];
+			}
+		};
+
 		Zotero.Server.Endpoints['/retrieval/build'] = function () {};
 		Zotero.Server.Endpoints['/retrieval/build'].prototype = {
 			supportedMethods: ['GET', 'POST'],
@@ -1092,7 +1121,7 @@ var RetrievalIndex = (function () {
 	}
 
 	function unregisterEndpoints() {
-		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/ocr-candidates', '/retrieval/admin/import', '/retrieval/admin/organize']) {
+		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/protocol', '/retrieval/ocr-candidates', '/retrieval/admin/import', '/retrieval/admin/organize']) {
 			try { delete Zotero.Server.Endpoints[p]; } catch (e) {}
 		}
 	}

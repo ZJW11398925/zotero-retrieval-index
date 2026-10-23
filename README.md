@@ -10,7 +10,7 @@
 - **混合检索**：BM25（`Intl.Segmenter` 中文分词，无词典依赖）+ 可选稠密向量（本机 Ollama `bge-m3`），RRF 融合
 - **零外部依赖**：不打包 PDF 库、不打包分词词典、不联网
 - **只读**：不修改 Zotero 数据库，索引单独存放在配置目录
-- **本地接口**：在 `127.0.0.1:23119` 上提供 `/retrieval/search`、`/retrieval/stats`、`/retrieval/build`、`/retrieval/ping`
+- **本地接口**：在 `127.0.0.1:23119` 上提供 `/retrieval/search`、`/retrieval/stats`、`/retrieval/build`、`/retrieval/ping`、`/retrieval/protocol`（Agent 使用协议）等
 
 ## 安装
 
@@ -109,6 +109,15 @@ curl "http://127.0.0.1:23119/retrieval/build?limit=20"
 每条结论标（文献简写，页 N），无页码写「页未知，来自全文缓存」，禁止编页码；
 区分「原文报告/据此推断/证据不足」，并交代被试与场景差异。
 ```
+
+**自举**：插件 v0.1.23+ 直接提供协议文本，agent 一条命令即可读到完整规则（不用带着文档）：
+
+```bash
+curl "http://127.0.0.1:23119/retrieval/protocol"                 # text/markdown
+curl "http://127.0.0.1:23119/retrieval/protocol?format=json"     # {"ok":true,"version":"0.1.23","protocol":"…"}
+```
+
+协议正文的单一事实源是 `docs/agent-usage-protocol.md`，`build.py` 在打包时自动生成 `content/protocol-text.js`（勿手改产物）。
 
 ## 冒烟回归测试（Zotero 升级后 1 分钟判活）
 
