@@ -870,7 +870,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.20',
+					ok: true, plugin: 'retrieval-index', version: '0.1.21',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -891,6 +891,75 @@ var RetrievalIndex = (function () {
 				} catch (e) {
 					ts.clear();
 					return [200, 'application/json', JSON.stringify({ ok: false, url, error: String((e && e.message) || e) })];
+				}
+			}
+		};
+
+		// 管理接口：把现有附件导入指定库（新建父条目 + 复制 PDF），仅新增
+		Zotero.Server.Endpoints['/retrieval/admin/import'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/admin/import'].prototype = {
+			supportedMethods: ['POST'],
+			supportedDataTypes: ['application/json'],
+			init: async function (options) {
+				const out = { ok: true, results: [] };
+				try {
+					const body = options.data || {};
+					const libID = parseInt(body.libraryID, 10);
+					const files = body.files || [];
+					if (!libID || !files.length) {
+						return [400, 'application/json', JSON.stringify({ ok: false, error: '需要 libraryID 与 files' })];
+					}
+					for (const f of files) {
+						const r = { sourceItemKey: f.sourceItemKey, ok: false };
+						try {
+							// 1) 定位源附件（跨库按 key 找）
+							let att = null;
+							for (const lib of Zotero.Libraries.getAll()) {
+								try {
+									const it = await Zotero.Items.getByLibraryAndKeyAsync(lib.libraryID, f.sourceItemKey);
+									if (it) { att = it; break; }
+								} catch (e) {}
+							}
+							if (!att) throw new Error('找不到源附件 ' + f.sourceItemKey);
+							const path = await att.getFilePathAsync();
+							if (!path) throw new Error('源附件无文件');
+							// 2) 新建父条目
+							const md = f.metadata || {};
+							const item = new Zotero.Item(md.itemType || 'journalArticle');
+							item.libraryID = libID;
+							for (const k of Object.keys(md)) {
+								if (k === 'itemType') continue;
+								try { item.setField(k, md[k]); } catch (e) {}
+							}
+							if (Array.isArray(f.creators) && f.creators.length) {
+								item.setCreators(f.creators.map(c => ({
+									firstName: c.firstName || '', lastName: c.lastName || '',
+									creatorType: c.creatorType || 'author', fieldMode: 0
+								})));
+							}
+							const itemID = await item.saveTx();
+							r.parentItemID = itemID;
+							r.parentKey = item.key;
+							// 3) 复制 PDF 为该条目的子附件
+							const attID = await Zotero.Attachments.importFromFile({
+								file: path, parentItemID: itemID, libraryID: libID
+							});
+							r.attachmentID = attID;
+							try {
+								const na = Zotero.Items.get(attID);
+								r.attachmentKey = na ? na.key : null;
+							} catch (e) {}
+							r.ok = true;
+							log('已导入库 ' + libID + '：' + (md.title || '') + ' → ' + r.parentKey);
+						} catch (e) {
+							r.error = String((e && e.message) || e);
+							out.ok = false;
+						}
+						out.results.push(r);
+					}
+					return [200, 'application/json', JSON.stringify(out)];
+				} catch (e) {
+					return [500, 'application/json', JSON.stringify({ ok: false, error: String((e && e.message) || e) })];
 				}
 			}
 		};
@@ -970,7 +1039,7 @@ var RetrievalIndex = (function () {
 	}
 
 	function unregisterEndpoints() {
-		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/ocr-candidates']) {
+		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/ocr-candidates', '/retrieval/admin/import']) {
 			try { delete Zotero.Server.Endpoints[p]; } catch (e) {}
 		}
 	}
