@@ -470,27 +470,19 @@ var RetrievalIndex = (function () {
 			if (n >= 2) continue;
 			// 摘要页先验：该文献首次出现时，若其首页块也在候选池前段，则用首页块作代表段
 			// （实测案例：Barrett 2015 的综述段排第 1、摘要段仅排 18，导致 agent 拿综述段外推）
-			// 摘要页先验（只作用于首条结果，把影响面控到最小）：
-			// 实测 Barrett 2015 的综述段排第 1、真正含结果的摘要段排名很靠后，
-			// 导致 agent 只能拿综述段外推。故首条优先改用该篇的摘要块。
+			// 摘要页先验（严格模式，只作用于首条结果）：
+			// 实测 Barrett 2015 的综述段排第 1、真正含结果的摘要段排名很靠后，agent 只能拿综述段外推。
+			// 只在**确实识别到摘要标记**时才替换——不做“退回任意首页块”的激进兜底
+			// （实测中文文献首页块常无摘要标记，强行替换会把首条换成从句子中间开始的片段）。
 			let emit = c;
 			if (out.length === 0 && n === 0 && idx.frontMap && idx.frontMap.has(tk)) {
-				const cands = idx.frontMap.get(tk);
-				let pick = -1;
-				// 1) 优先含“摘要/abstract”标记的首页块（不要求它进候选池——全文都在手边）
-				for (const fi of cands) {
+				const ABS = /摘\s*要|abstract/i;
+				let pick = -1, bestAt = 1e9;
+				for (const fi of idx.frontMap.get(tk)) {
 					const fc = idx.chunks[fi];
-					const head = (fc && fc.text || '').slice(0, 220);
-					if (/摘要|abstract/i.test(head)) { pick = fi; break; }
-				}
-				// 2) 退回：首页块中排名最靠前的一块（须在候选池前 60 名内）
-				if (pick < 0) {
-					let bestCost = 60;
-					for (const fi of cands) {
-						if (fi === i) continue;
-						const pos = posOf.get(fi);
-						if (pos !== undefined && pos < bestCost) { bestCost = pos; pick = fi; }
-					}
+					const txt = (fc && fc.text) || '';
+					const m = txt.slice(0, 500).match(ABS);
+					if (m && (m.index || 0) < bestAt) { bestAt = m.index || 0; pick = fi; }
 				}
 				if (pick >= 0 && pick !== i) {
 					const fc = idx.chunks[pick];
@@ -541,7 +533,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.10',
+					ok: true, plugin: 'retrieval-index', version: '0.1.11',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
