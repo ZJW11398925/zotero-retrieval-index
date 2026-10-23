@@ -40,6 +40,50 @@ ENDPOINT = 'http://127.0.0.1:23119/retrieval/ocr-candidates'
 STORAGE = os.path.join(os.environ['USERPROFILE'], 'Zotero', 'storage')
 TMP = os.path.join(tempfile.gettempdir(), 'zotero_ocr')
 CJK = r'\u4e00-\u9fff'
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# OCR 质量判据（中文常用字覆盖率 + 中文 bigram 命中率）
+# 背景：Windows zh-CN 引擎读韩/日文会输出「像汉字但全是罕见字」的乱码；原语言探针只按汉字占比判断会误判。
+# 实测：真中文 bigram≥0.43、常用字≥0.97；韩文 bigram≤0.37、日文≈0.63（日文由跳过清单人工排除）。
+COMMON_CHARS = set()
+BIGRAMS = set()
+
+
+def _load_lexicon():
+    global COMMON_CHARS, BIGRAMS
+    try:
+        p = os.path.join(TOOLS_DIR, 'cjk_common_chars.txt')
+        if os.path.exists(p):
+            COMMON_CHARS = set(open(p, encoding='utf-8').read())
+    except Exception:
+        pass
+    try:
+        p = os.path.join(TOOLS_DIR, 'cjk_bigrams.txt')
+        if os.path.exists(p):
+            BIGRAMS = set(open(p, encoding='utf-8').read().split('\n'))
+    except Exception:
+        pass
+
+
+def ocr_quality(text):
+    """返回 (bigram 命中率, 常用字覆盖率)；汉字不足 30 时返回 (None, None)。"""
+    s = str(text or '')
+    chars = [ch for ch in s if 0x4E00 <= ord(ch) <= 0x9FFF]
+    if len(chars) < 30:
+        return None, None
+    hit = tot = 0
+    prev = None
+    for ch in s:
+        if 0x4E00 <= ord(ch) <= 0x9FFF:
+            if prev is not None:
+                tot += 1
+                if (prev + ch) in BIGRAMS:
+                    hit += 1
+            prev = ch
+        else:
+            prev = None
+    common = sum(1 for ch in chars if ch in COMMON_CHARS) / len(chars)
+    return ((hit / tot) if tot else None), common
 
 
 # ---------- Windows OCR 封装 ----------
@@ -213,7 +257,29 @@ def main():
                     help='先 OCR 首页探测文字系统，只处理中文为主的文献（跳过韩/日文）')
     ap.add_argument('--force', action='store_true', help='重做已有旁路')
     ap.add_argument('--budget-pages', type=int, default=0, help='累计 OCR 页数上限（0=不限）')
+    ap.add_argument('--min-bigram', type=float, default=0.45, help='全文 OCR 的中文 bigram 命中率下限（0=关闭）')
+    ap.add_argument('--min-common', type=float, default=0.90, help='全文 OCR 的常用字覆盖率下限（0=关闭）')
+    ap.add_argument('--skip-file', default='', help='跳过清单 JSON（{itemKey: reason}）；质量不达标的会自动追加')
     args = ap.parse_args()
+
+    _load_lexicon()
+    skip = {}
+    if args.skip_file and os.path.exists(args.skip_file):
+        try:
+            d = json.load(open(args.skip_file, encoding='utf-8'))
+            skip = d if isinstance(d, dict) else {k: 'skip' for k in d}
+        except Exception:
+            skip = {}
+
+    def mark_skip(key, reason):
+        if not args.skip_file:
+            return
+        skip[key] = reason
+        try:
+            with open(args.skip_file, 'w', encoding='utf-8') as f:
+                json.dump(skip, f, ensure_ascii=False, indent=1, sort_keys=True)
+        except Exception:
+            pass
 
     want = set(k.strip() for k in args.keys.split(',') if k.strip())
     if want and args.scan:
@@ -245,6 +311,11 @@ def main():
 
     if want:
         jobs = {k: v for k, v in jobs.items() if k in want}
+
+    if skip:
+        before = len(jobs)
+        jobs = {k: v for k, v in jobs.items() if k not in skip}
+        print('按跳过清单排除 %d 篇（清单共 %d 条）' % (before - len(jobs), len(skip)))
 
     print('候选：整篇无文本 %d 篇 / 含空白页 %d 篇 → 合计 %d 篇' % (len(failed), len(blank), len(jobs)))
     if args.limit:
@@ -317,6 +388,16 @@ def main():
                     _d.close()
                     only = set(range(1, _n + 1))
                 pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=only, dpi=args.dpi)
+                # 质量闸：拒绝韩/日文误识别产生的乱码，避免写入旁路污染索引
+                if args.min_bigram or args.min_common:
+                    _bg, _cm = ocr_quality('\n'.join(pages))
+                    if _bg is not None and ((args.min_bigram and _bg < args.min_bigram) or
+                                            (args.min_common and _cm < args.min_common)):
+                        mark_skip(key, 'OCR 质量不达标 bigram=%.3f common=%.3f（疑似韩/日文）' % (_bg, _cm))
+                        print('  [%d/%d] %s 跳过：OCR 质量不达标（bigram=%.3f common=%.3f，疑似韩/日文，已记入跳过清单）' % (
+                            idx, len(jobs), key, _bg, _cm))
+                        skipped += 1
+                        continue
             else:
                 pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=set(job['pages']), dpi=args.dpi)
             out = os.path.join(ocr_dir, key + '.json')
