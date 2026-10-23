@@ -870,7 +870,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.21',
+					ok: true, plugin: 'retrieval-index', version: '0.1.22',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -891,6 +891,59 @@ var RetrievalIndex = (function () {
 				} catch (e) {
 					ts.clear();
 					return [200, 'application/json', JSON.stringify({ ok: false, url, error: String((e && e.message) || e) })];
+				}
+			}
+		};
+
+		// 管理接口：设置分类、追加标签（仅整理元数据，不改条目内容）
+		Zotero.Server.Endpoints['/retrieval/admin/organize'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/admin/organize'].prototype = {
+			supportedMethods: ['POST'],
+			supportedDataTypes: ['application/json'],
+			init: async function (options) {
+				const out = { ok: true, results: [] };
+				try {
+					const body = options.data || {};
+					const items = body.items || [];
+					if (!items.length) return [400, 'application/json', JSON.stringify({ ok: false, error: '需要 items' })];
+					for (const spec of items) {
+						const r = { key: spec.key, ok: false };
+						try {
+							const libID = parseInt(spec.libraryID, 10) || 3;
+							const item = await Zotero.Items.getByLibraryAndKeyAsync(libID, spec.key);
+							if (!item) throw new Error('找不到条目 ' + spec.key);
+							// 分类：collection key → collection ID
+							if (Array.isArray(spec.collections)) {
+								const ids = [];
+								for (const ck of spec.collections) {
+									let col = null;
+									try { col = await Zotero.Collections.getByLibraryAndKeyAsync(libID, ck); } catch (e) {}
+									if (col) ids.push(col.id);
+									else log('分类 key 无效：' + ck);
+								}
+								if (ids.length) { item.setCollections(ids); r.collections = ids.length; }
+							}
+							// 标签：追加（不覆盖已有）
+							if (Array.isArray(spec.addTags)) {
+								let n = 0;
+								for (const tg of spec.addTags) {
+									if (tg) { item.addTag(String(tg)); n++; }
+								}
+								r.addedTags = n;
+							}
+							await item.saveTx();
+							r.ok = true;
+							r.title = item.getField('title');
+							log('已整理 ' + spec.key + '：分类 ' + (r.collections || 0) + ' / 标签 ' + (r.addedTags || 0));
+						} catch (e) {
+							r.error = String((e && e.message) || e);
+							out.ok = false;
+						}
+						out.results.push(r);
+					}
+					return [200, 'application/json', JSON.stringify(out)];
+				} catch (e) {
+					return [500, 'application/json', JSON.stringify({ ok: false, error: String((e && e.message) || e) })];
 				}
 			}
 		};
@@ -1039,7 +1092,7 @@ var RetrievalIndex = (function () {
 	}
 
 	function unregisterEndpoints() {
-		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/ocr-candidates', '/retrieval/admin/import']) {
+		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/ocr-candidates', '/retrieval/admin/import', '/retrieval/admin/organize']) {
 			try { delete Zotero.Server.Endpoints[p]; } catch (e) {}
 		}
 	}
