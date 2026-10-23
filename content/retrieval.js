@@ -506,7 +506,37 @@ var RetrievalIndex = (function () {
 			});
 		}
 		if (skippedRetracted) log('已过滤撤稿文献 ' + skippedRetracted + ' 条（includeRetracted=1 可查看）');
-		return out;
+
+		// 证据来源事实（不做“够不够”的判定——实测词面/余弦/本地小模型都不可靠，
+		// 只给出可核验的来源信息，由调用方自行决定是否标注局限）
+		const paperSet = new Set();
+		let abstractOnly = 0, cacheSourced = 0, pageKnown = 0;
+		for (const r of out) {
+			paperSet.add(r.parentKey || r.itemKey);
+			if (r.role === 'front') abstractOnly++;
+			if (r.pageSource === 'cache') cacheSourced++;
+			if (r.page) pageKnown++;
+		}
+		const evidence = {
+			returned: out.length,
+			papers: paperSet.size,
+			abstractOnlySegments: abstractOnly,
+			cacheSourcedSegments: cacheSourced,
+			segmentsWithPage: pageKnown,
+			topSegmentRole: out.length ? (out[0].role || 'body') : null,
+			retractedFiltered: skippedRetracted,
+			hints: []
+		};
+		if (out.length && evidence.segmentsWithPage < out.length) {
+			evidence.hints.push('部分片段无页码（来自 Zotero 全文缓存，原文 PDF 缺失）');
+		}
+		if (out.length && abstractOnly === out.length) {
+			evidence.hints.push('全部片段均为摘要/首页内容，未覆盖正文方法与结果');
+		} else if (abstractOnly > 0) {
+			evidence.hints.push('含 ' + abstractOnly + ' 条摘要/首页片段');
+		}
+		if (skippedRetracted) evidence.hints.push('已过滤 ' + skippedRetracted + ' 条撤稿文献');
+		return { results: out, evidence };
 	}
 
 	function stats() {
@@ -533,7 +563,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.11',
+					ok: true, plugin: 'retrieval-index', version: '0.1.12',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -583,7 +613,8 @@ var RetrievalIndex = (function () {
 						includeRetracted: o.searchParams.get('includeRetracted') || 0,
 						full: o.searchParams.get('full') || 0
 					});
-					return [200, 'application/json', JSON.stringify(r)];
+					const flat = parseInt(o.searchParams.get('flat') || '0', 10);
+					return [200, 'application/json', JSON.stringify(flat ? r.results : r)];
 				} catch (e) {
 					return [400, 'application/json', JSON.stringify({ error: String((e && e.message) || e) })];
 				}
@@ -660,7 +691,8 @@ var RetrievalIndex = (function () {
 			mk('test', '检索自检（示例查询）', async () => {
 				try {
 					const r = await search({ q: '儿童色彩偏好', k: 3 });
-					Services.prompt.alert(null, '检索自检', r.map((x, i) => (i + 1) + '. [' + x.page + '页] ' + (x.title || '').slice(0, 30) + '\n   ' + x.text.slice(0, 60) + '…').join('\n\n') || '无结果');
+					const list = r.results || [];
+					Services.prompt.alert(null, '检索自检', list.map((x, i) => (i + 1) + '. [' + (x.page || '无页码') + '页] ' + (x.title || '').slice(0, 30) + '\n   ' + x.text.slice(0, 60) + '…').join('\n\n') || '无结果');
 				} catch (e) {
 					Services.prompt.alert(null, '检索自检失败', String((e && e.message) || e));
 				}
