@@ -1,0 +1,306 @@
+{
+  "schema": 1,
+  "generated_by": "tools/smoke_test.py --freeze",
+  "frozen_at": "2026-10-23T21:54:23+08:00",
+  "base_url": "http://127.0.0.1:23119",
+  "plugin": "retrieval-index",
+  "plugin_version": "0.1.21",
+  "k": 5,
+  "mode": "hybrid",
+  "stats": {
+    "chunks": 52298,
+    "papers": 739,
+    "dim": 1024,
+    "model": "bge-m3"
+  },
+  "queries": [
+    {
+      "qid": "q1",
+      "q": "儿童色彩偏好随年龄变化的规律是什么？",
+      "top1": {
+        "itemKey": "6NUQYGF3",
+        "parentKey": "6NUQYGF3",
+        "title": "儿童友好城市的色彩环境规划设计研究",
+        "page": 4,
+        "pageSource": "pdf"
+      },
+      "top5": [
+        {
+          "itemKey": "6NUQYGF3",
+          "parentKey": "6NUQYGF3",
+          "title": "儿童友好城市的色彩环境规划设计研究",
+          "page": 4,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "6I29LKGI",
+          "parentKey": "QBHTZTW4",
+          "title": "Young Children’s Color Preferences in the Interior Environment（室内环境中幼儿的色彩偏好）",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
+          "itemKey": "8EPANU4T",
+          "parentKey": "VJ9S28J5",
+          "title": "An experimentation on children’s colour preferences in generic terms and applied to a school context（儿童一般色彩偏好及其在学校情境中应用的实验研究）",
+          "page": 4,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "6NUQYGF3",
+          "parentKey": "6NUQYGF3",
+          "title": "儿童友好城市的色彩环境规划设计研究",
+          "page": 2,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "GPIC2G8V",
+          "parentKey": "GPIC2G8V",
+          "title": "颜色偏好对青春期儿童家具选择的影响【搜狗文档翻译_译文_英译中】",
+          "page": 2,
+          "pageSource": "pdf"
+        }
+      ]
+    },
+    {
+      "qid": "q2",
+      "q": "不同性别儿童在色彩偏好上的差异表现在哪里？",
+      "top1": {
+        "itemKey": "6NUQYGF3",
+        "parentKey": "6NUQYGF3",
+        "title": "儿童友好城市的色彩环境规划设计研究",
+        "page": 4,
+        "pageSource": "pdf"
+      },
+      "top5": [
+        {
+          "itemKey": "6NUQYGF3",
+          "parentKey": "6NUQYGF3",
+          "title": "儿童友好城市的色彩环境规划设计研究",
+          "page": 4,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "IML7LTMS",
+          "parentKey": "FPSIHZQU",
+          "title": "Pink for Girls, Red for Boys, and Blue for Both Genders: Colour Preferences in Children and Adults（女孩偏爱粉色、男孩偏爱红色、两性均偏爱蓝色：儿童与成人的色彩偏好）",
+          "page": 1,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "BN6IGBQ9",
+          "parentKey": "FT3I3W65",
+          "title": "Gender Labels on Gender-Neutral Colors: Do they Affect Children’s Color Preferences and Play Performance?（中性色彩的性别标签：是否影响儿童的色彩偏好与游戏表现？）",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
+          "itemKey": "GPIC2G8V",
+          "parentKey": "GPIC2G8V",
+          "title": "颜色偏好对青春期儿童家具选择的影响【搜狗文档翻译_译文_英译中】",
+          "page": 2,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "7AR7LX33",
+          "parentKey": "RYVDCMJS",
+          "title": "Investigating the Gender-based Colour Preference in Children（儿童色彩偏好的性别差异研究）",
+          "page": 5,
+          "pageSource": "pdf"
+        }
+      ]
+    },
+    {
+      "qid": "q3",
+      "q": "色彩的饱和度与明度如何影响儿童的情绪和唤醒水平？",
+      "top1": {
+        "itemKey": "6NUQYGF3",
+        "parentKey": "6NUQYGF3",
+        "title": "儿童友好城市的色彩环境规划设计研究",
+        "page": 2,
+        "pageSource": "pdf"
+      },
+      "top5": [
+        {
+          "itemKey": "6NUQYGF3",
+          "parentKey": "6NUQYGF3",
+          "title": "儿童友好城市的色彩环境规划设计研究",
+          "page": 2,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "6NUQYGF3",
+          "parentKey": "6NUQYGF3",
+          "title": "儿童友好城市的色彩环境规划设计研究",
+          "page": 4,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "X2WA8QVT",
+          "parentKey": "X2WA8QVT",
+          "title": "基于儿童对幼儿园室内空间色彩选择的偏好",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
+          "itemKey": "HBVDZ6UJ",
+          "parentKey": "UGH2D4VZ",
+          "title": "儿童友好城市背景下小学护学空间色彩选择研究",
+          "page": 1,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "IA8G7PIJ",
+          "parentKey": "IA8G7PIJ",
+          "title": "참여디자인을 적용한 학교 환경색채연구 -초등학교, 중학교 색채계획을 중심으로- zh（应用参与式设计的学校环境色彩研究：以小学和中学色彩规划为中心）",
+          "page": 4,
+          "pageSource": "pdf"
+        }
+      ]
+    },
+    {
+      "qid": "q4",
+      "q": "小学教室或走廊的墙面色彩如何影响学生的行为与注意力？",
+      "top1": {
+        "itemKey": "GJARMZBS",
+        "parentKey": "GJARMZBS",
+        "title": "想象力的建筑：对基础教育环境的研究",
+        "page": 73,
+        "pageSource": "pdf"
+      },
+      "top5": [
+        {
+          "itemKey": "GJARMZBS",
+          "parentKey": "GJARMZBS",
+          "title": "想象力的建筑：对基础教育环境的研究",
+          "page": 73,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "ZVPZDERK",
+          "parentKey": "ZVPZDERK",
+          "title": "色彩在小学建筑立面设计中的应用与研究",
+          "page": 1,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "MVHWDRWN",
+          "parentKey": "DRI6G2XL",
+          "title": "The influence of color on student emotion, heart rate, and performance in learning environments（学习环境中色彩对学生情绪、心率与表现的影响）",
+          "page": 2,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "RYTNMXD8",
+          "parentKey": "RYTNMXD8",
+          "title": "有利于注意力过程的物理学习环境：空白空间、色彩和亲自然设计的影响",
+          "page": 18,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "IA8G7PIJ",
+          "parentKey": "IA8G7PIJ",
+          "title": "참여디자인을 적용한 학교 환경색채연구 -초등학교, 중학교 색채계획을 중심으로- zh（应用参与式设计的学校环境色彩研究：以小学和中学色彩规划为中心）",
+          "page": 10,
+          "pageSource": "pdf"
+        }
+      ]
+    },
+    {
+      "qid": "q5",
+      "q": "幼儿园活动室的色彩设计有哪些具体的做法或建议？",
+      "top1": {
+        "itemKey": "SQHR9BC2",
+        "parentKey": "NTBU4DVD",
+        "title": "基于儿童心理学的幼儿园建筑色彩设计研究",
+        "page": 1,
+        "pageSource": "pdf"
+      },
+      "top5": [
+        {
+          "itemKey": "SQHR9BC2",
+          "parentKey": "NTBU4DVD",
+          "title": "基于儿童心理学的幼儿园建筑色彩设计研究",
+          "page": 1,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "SQHR9BC2",
+          "parentKey": "NTBU4DVD",
+          "title": "基于儿童心理学的幼儿园建筑色彩设计研究",
+          "page": 2,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "X2WA8QVT",
+          "parentKey": "X2WA8QVT",
+          "title": "基于儿童对幼儿园室内空间色彩选择的偏好",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
+          "itemKey": "UNW76UKD",
+          "parentKey": "3S9BA9GS",
+          "title": "以儿童发展为中心的幼儿园空间结构设计",
+          "page": 2,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "ZBDN3SI9",
+          "parentKey": "3Q5IDBXF",
+          "title": "基于“弹性空间”理论的幼儿园室内设计研究——以蒙自铁路幼儿园为例",
+          "page": 60,
+          "pageSource": "pdf"
+        }
+      ]
+    },
+    {
+      "qid": "q6",
+      "q": "暖色与冷色环境对儿童认知任务表现有什么不同影响？",
+      "top1": {
+        "itemKey": "6I29LKGI",
+        "parentKey": "QBHTZTW4",
+        "title": "Young Children’s Color Preferences in the Interior Environment（室内环境中幼儿的色彩偏好）",
+        "page": null,
+        "pageSource": "cache"
+      },
+      "top5": [
+        {
+          "itemKey": "6I29LKGI",
+          "parentKey": "QBHTZTW4",
+          "title": "Young Children’s Color Preferences in the Interior Environment（室内环境中幼儿的色彩偏好）",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
+          "itemKey": "RFJQBMGB",
+          "parentKey": "5WZ65FEM",
+          "title": "The effect of colour on children's cognitive performance（色彩对儿童认知表现的影响）",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
+          "itemKey": "AL7DAHYK",
+          "parentKey": "X6XY53JX",
+          "title": "Effects on Students Perceptual Evaluations of the Wall Colors Used in Design Studios by the Virtual Reality Method（基于虚拟现实方法研究设计工作室墙面色彩对学生感知评价的影响）",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
+          "itemKey": "CQP84GM2",
+          "parentKey": "6VPCJ24T",
+          "title": "空间布艺色彩设计对ADHD儿童注意缺陷行为的改善",
+          "page": 3,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "CQP84GM2",
+          "parentKey": "6VPCJ24T",
+          "title": "空间布艺色彩设计对ADHD儿童注意缺陷行为的改善",
+          "page": 1,
+          "pageSource": "pdf"
+        }
+      ]
+    }
+  ]
+}
