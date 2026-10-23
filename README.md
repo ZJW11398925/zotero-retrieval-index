@@ -138,7 +138,10 @@ python tools/smoke_test.py --freeze   # 确认新排序可接受后，更新黄�
 
 ```bash
 python tools/pack_team_kit.py --out-dir D:\workspace\dist
-# 产物：retrieval-index-team-kit-v<版本>-<日期>.zip（v0.1.23 / 52,298 块 → 约 54 MB）
+# 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
+python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
+# 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
+#       全量 v0.1.23 → 52,298 块 / 738 父条目；纯净版 → 52,296 块 / 737 父条目（约 54 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
