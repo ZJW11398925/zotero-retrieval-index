@@ -57,6 +57,11 @@ var RetrievalIndex = (function () {
 		catch (e) { return null; }
 	}
 
+	async function readAbs(path) {
+		try { return await Zotero.File.getContentsAsync(path); }
+		catch (e) { return null; }
+	}
+
 	async function writeText(name, text) {
 		const p = idxPath(name);
 		if (!p) throw new Error('索引目录未就绪');
@@ -236,8 +241,22 @@ var RetrievalIndex = (function () {
 			const chunks = [];
 			const vecs = [];
 			let done = 0, used = 0, failed = 0, truncated = 0, embedErrors = 0, dimOutProbe = 0;
-			let cacheRecovered = 0, retractedCount = 0, reused = 0;
+			let cacheRecovered = 0, retractedCount = 0, reused = 0, ocrUsed = 0;
 			const itemVersions = {};
+			const failedItems = [];
+			const pageGaps = {};
+			const ocrDir = dataDir + '\\ocr';
+			const ocrUsedKeys = [];
+			// 只读一次清单，避免对上千个条目逐个试读旁路文件
+			const ocrManifestRaw = await readAbs(ocrDir + '\\_manifest.json');
+			let ocrKeys = new Set();
+			if (ocrManifestRaw) {
+				try {
+					const mj = JSON.parse(ocrManifestRaw);
+					ocrKeys = new Set((mj && mj.keys) || []);
+					log('OCR 旁路可用：' + ocrKeys.size + ' 篇');
+				} catch (e) { log('OCR 清单解析失败：' + e); }
+			}
 
 			// 增量模式：读取旧索引，按条目版本号复用未变更的块与向量
 			let prev = null;
@@ -283,7 +302,10 @@ var RetrievalIndex = (function () {
 				// 增量：条目版本未变则直接复用旧块与旧向量
 				const ver = item.version || 0;
 				itemVersions[id] = ver;
-				if (prev && canReuse && prev.versions[id] === ver && prev.byItem.has(id)) {
+				const hasOcr = ocrKeys.has(item.key);
+				const prevOcrUsed = (prev && prev.meta && prev.meta.ocrUsedKeys) || [];
+				const ocrNew = hasOcr && prevOcrUsed.indexOf(item.key) === -1;
+				if (prev && canReuse && !ocrNew && prev.versions[id] === ver && prev.byItem.has(id)) {
 					for (const idx of prev.byItem.get(id)) {
 						const oc = prev.chunks[idx];
 						chunks.push({
@@ -305,10 +327,27 @@ var RetrievalIndex = (function () {
 					buildState.phase = 'reusing';
 					continue;
 				}
-				// 1) 优先用 PDFWorker 逐页提取（有真实页码）
+				// 0) OCR 旁路优先（外部脚本生成，保留页分隔）
 				let pages = [];
 				let pageSource = 'pdf';
-				if (item.isPDFAttachment()) {
+				let ocrPageSet = null;
+				if (hasOcr) {
+					const sraw = await readAbs(ocrDir + '\\' + item.key + '.json');
+					if (sraw) {
+						try {
+							const sj = JSON.parse(sraw);
+							if (sj && Array.isArray(sj.pages) && sj.pages.length) {
+								pages = sj.pages.map(x => String(x || ''));
+								pageSource = 'ocr';
+								ocrPageSet = new Set(sj.ocrPages || []);
+								ocrUsed++;
+								ocrUsedKeys.push(item.key);
+							}
+						} catch (e) { log('OCR 旁路解析失败 ' + item.key + '：' + e); }
+					}
+				}
+				// 1) 否则用 PDFWorker 逐页提取（有真实页码）
+				if (!pages.length && item.isPDFAttachment()) {
 					try {
 						const res = await Zotero.PDFWorker.getFullText(id, maxPages);
 						if (res && res.text) {
@@ -330,7 +369,18 @@ var RetrievalIndex = (function () {
 						}
 					} catch (e) { /* 无缓存 */ }
 				}
-				if (!pages.length) { failed++; done++; continue; }
+				if (!pages.length) {
+					failed++; done++;
+					if (failedItems.length < 300) failedItems.push({ itemID: id, itemKey: item.key, title, reason: 'no_text' });
+					continue;
+				}
+				if (pageSource !== 'ocr') {
+					const gaps = [];
+					for (let gi = 0; gi < pages.length; gi++) {
+						if ((pages[gi] || '').replace(/\s/g, '').length < 50) gaps.push(gi + 1);
+					}
+					if (gaps.length && gaps.length < pages.length) pageGaps[item.key] = gaps;
+				}
 				// 缓存回退且无分页符时，页码不可知
 				const pageUnknown = pageSource === 'cache' && pages.length === 1;
 				const parentKey = parent ? parent.key : '';
@@ -346,6 +396,7 @@ var RetrievalIndex = (function () {
 						page: pageUnknown ? 0 : cs[i].page,
 						pageSource,
 						role: (!pageUnknown && cs[i].page === 1) ? 'front' : '',
+						ocr: !!(ocrPageSet && ocrPageSet.has(cs[i].page)),
 						text: cs[i].text
 					});
 				}
@@ -376,6 +427,7 @@ var RetrievalIndex = (function () {
 				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
 				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
 				cacheRecovered, retractedPapers: retractedCount, reused, itemVersions,
+				ocrUsed, ocrUsedKeys, failedItems, pageGaps,
 				sourceAttachments: used, failed, truncated, elapsedMs: Date.now() - t0
 			});
 			cached = null; bm25 = null; parentKeyCache.clear();
@@ -563,7 +615,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.12',
+					ok: true, plugin: 'retrieval-index', version: '0.1.13',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -584,6 +636,27 @@ var RetrievalIndex = (function () {
 				} catch (e) {
 					ts.clear();
 					return [200, 'application/json', JSON.stringify({ ok: false, url, error: String((e && e.message) || e) })];
+				}
+			}
+		};
+
+		Zotero.Server.Endpoints['/retrieval/ocr-candidates'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/ocr-candidates'].prototype = {
+			supportedMethods: ['GET'],
+			init: async function (options) {
+				try {
+					await loadIndex();
+					const m = (cached && cached.meta) || {};
+					return [200, 'application/json', JSON.stringify({
+						ocrDir: dataDir + '\\ocr',
+						ocrUsed: m.ocrUsed || 0,
+						failedCount: (m.failedItems || []).length,
+						failed: m.failedItems || [],
+						blankPageCount: Object.keys(m.pageGaps || {}).length,
+						blankPages: m.pageGaps || {}
+					})];
+				} catch (e) {
+					return [500, 'application/json', JSON.stringify({ error: String((e && e.message) || e) })];
 				}
 			}
 		};
@@ -640,7 +713,7 @@ var RetrievalIndex = (function () {
 	}
 
 	function unregisterEndpoints() {
-		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama']) {
+		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/ocr-candidates']) {
 			try { delete Zotero.Server.Endpoints[p]; } catch (e) {}
 		}
 	}
@@ -687,6 +760,14 @@ var RetrievalIndex = (function () {
 				Services.prompt.alert(null, '检索索引', s.loaded
 					? ('块：' + s.chunks + '\n文献：' + s.papers + '\n向量：' + (s.hasVectors ? ('有（' + s.dim + ' 维）') : '无') + '\n建立时间：' + ((s.meta && s.meta.builtAt) || '未知'))
 					: ('尚未建立索引\n数据目录：' + dataDir));
+			});
+			mk('ocr', 'OCR 候选清单', async () => {
+				await loadIndex();
+				const m = (cached && cached.meta) || {};
+				const nf = (m.failedItems || []).length;
+				const nb = Object.keys(m.pageGaps || {}).length;
+				Services.prompt.alert(null, 'OCR 候选',
+					'完全无文本的文献：' + nf + ' 篇\n含空白页的文献：' + nb + ' 篇\n已用 OCR 旁路：' + (m.ocrUsed || 0) + ' 篇\n\n旁路目录：\n' + dataDir + '\\ocr\n\n用 tools/ocr_helper.py 生成旁路文件后，点「增量更新索引」即可并入。');
 			});
 			mk('test', '检索自检（示例查询）', async () => {
 				try {
