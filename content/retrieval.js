@@ -543,6 +543,28 @@ var RetrievalIndex = (function () {
 		}
 	}
 
+	// 孤立 PDF 以文件名当标题，常带编号/作者/翻译后缀等噪声，检索时清洗
+	function cleanTitle(title) {
+		let s = String(title || '').trim();
+		if (!s) return '';
+		s = s.replace(/\.pdf$/i, '');
+		s = s.replace(/^\s*\d{1,4}\s*[.、,_\-—]\s*/, '');        // 前导编号 "10." "29、"
+		s = s.replace(/^[0-9_\-]{6,}[\s_]+/, '');                 // 前导长数字串 "200000505267_..."
+		s = s.replace(/[_\-\s]*(翻译版|中译版|translate|translated|zh|中文版)\s*$/i, '');
+		s = s.replace(/_v\d+$/i, '');
+		s = s.replace(/[_\s]+[\u4e00-\u9fff]{2,4}$/, (m) => (m.length <= 5 ? '' : m)); // 尾部作者名（如 _温雅俊）
+		s = s.replace(/\s{2,}/g, ' ').trim();
+		return s || String(title || '');
+	}
+
+	// 标题信息量过低（纯编号、纯英文缩写等）→ 检索时降级
+	function titlePoor(title) {
+		const s = cleanTitle(title);
+		const cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+		const latin = (s.match(/[A-Za-z]/g) || []).length;
+		return (cjk < 4 && latin < 12);
+	}
+
 	// 标题归一化：库里存在“同一文献被建成多个独立条目”的情况（实测 30 组），
 	// 仅按父条目去重拦不住，需要再加一层标题级去重
 	function titleKeyOf(title) {
@@ -608,6 +630,7 @@ var RetrievalIndex = (function () {
 		const perPaper = new Map();          // 按父条目去重（同一文献多个 PDF 副本）
 		const seenText = new Set();          // 完全相同的片段只留一条
 		let skippedRetracted = 0;
+		for (let pass = 1; pass <= 2; pass++) {
 		for (const [i] of ranked) {
 			if (out.length >= kk) break;
 			const c = idx.chunks[i];
@@ -615,7 +638,9 @@ var RetrievalIndex = (function () {
 			const isRet = c.retracted !== undefined ? !!c.retracted : isRetractedTitle(c.title);
 			if (isRet && !includeRetracted) { skippedRetracted++; continue; }
 			const pk = resolveParentKey(c);
-			const tk = titleKeyOf(c.title) || pk;   // 同标题不同条目也视为同一文献
+			const ctitle = cleanTitle(c.title);
+			if (pass === 1 && titlePoor(c.title)) continue;   // 第一轮跳过低信息量标题
+			const tk = titleKeyOf(ctitle) || pk;   // 同标题不同条目也视为同一文献
 			const n = perPaper.get(tk) || 0;
 			if (n >= 2) continue;
 			// 摘要页先验：该文献首次出现时，若其首页块也在候选池前段，则用首页块作代表段
@@ -645,7 +670,7 @@ var RetrievalIndex = (function () {
 			perPaper.set(tk, n + 1);
 			const ec = emit;
 			out.push({
-				itemKey: ec.itemKey, parentKey: resolveParentKey(ec), title: ec.title,
+				itemKey: ec.itemKey, parentKey: resolveParentKey(ec), title: cleanTitle(ec.title),
 				page: ec.page ? ec.page : null,
 				pageSource: ec.pageSource || (ec.page ? 'pdf' : 'unknown'),
 				role: ec.role || '',
@@ -654,6 +679,7 @@ var RetrievalIndex = (function () {
 					? (ec.text || '').slice(0, full ? 3000 : 1200) + '…'
 					: (ec.text || '')
 			});
+		}
 		}
 		if (skippedRetracted) log('已过滤撤稿文献 ' + skippedRetracted + ' 条（includeRetracted=1 可查看）');
 
@@ -713,7 +739,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.15',
+					ok: true, plugin: 'retrieval-index', version: '0.1.16',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
