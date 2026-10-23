@@ -148,6 +148,26 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 - 队友三步：设 `xpinstall.signatures.required=false` → 装 xpi 重启 → 关 Zotero 跑 `deploy_index.ps1 -Force`，再跑 `verify_install.ps1`（17 项自检）
 - kit 源文件在 `tools/team-kit/`（部署脚本、校验脚本、使用说明），打包脚本会注入快照日期并生成 SHA256 清单
 
+## 维护接口：重复附件清理（v0.1.24+）
+
+库里同一 PDF 挂了两份（或同一附件被重复导入）时，可用管理接口把**多余附件**移入回收站（可恢复）：
+
+```bash
+# 1) 先 dry-run：只回报会做什么，不改任何东西（默认就是 dry-run）
+curl -X POST http://127.0.0.1:23119/retrieval/admin/dedup \
+  -H "Content-Type: application/json" \
+  -d '{"items":[{"libraryID":3,"key":"S8JHY7MS"}]}'
+
+# 2) 确认清单无误后 apply：必须带 confirm 口令
+curl -X POST http://127.0.0.1:23119/retrieval/admin/dedup \
+  -H "Content-Type: application/json" \
+  -d '{"dryRun":false,"confirm":"DELETE-DUPLICATES","items":[{"libraryID":3,"key":"S8JHY7MS"}]}'
+```
+
+安全护栏：默认 dry-run；apply 需 `confirm:"DELETE-DUPLICATES"`；**只允许删附件**（拒绝父条目）；**拒删当前索引内的条目**；单次 ≤200 条；执行前自动把条目 JSON 备份到 `<索引目录>/admin-dedup-backup-<时间戳>.json`，删除进回收站可恢复。
+
+> 判据务必用 **PDF 文件哈希**（标题、正文前 1200 字都会漏判）。跨库重复无法用 Zotero 合并，删低优先级库副本会丢该库的标签/分类，建议保留。
+
 ## 向量检索（可选）
 
 装了 [Ollama](https://ollama.com) 并拉取模型后会自动启用；检测不到则退化为纯 BM25，其余功能不受影响。
