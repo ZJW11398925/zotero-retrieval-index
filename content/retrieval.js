@@ -109,14 +109,16 @@ var RetrievalIndex = (function () {
 				for (let i = 0; i < q.length; i++) matrix[i] = q[i] / 127;
 			} catch (e) { log('向量解码失败：' + e); matrix = null; }
 		}
-		// 摘要页先验：每篇文献的首页块（role='front'），用于优先作为该篇的代表段
+		// 摘要页先验：保存每篇文献**所有**首页块的索引（首页常被切成标题/作者/摘要/引言等多块，
+		// 检索时取其中排名最靠前的一块作代表，而不是取最长的一块——后者排名可能很靠后）
 		const frontMap = new Map();
 		for (let i = 0; i < chunks.length; i++) {
 			const c = chunks[i];
 			if (c.role !== 'front') continue;
 			const k = titleKeyOf(c.title) || c.parentKey || c.itemKey;
-			const prevIdx = frontMap.get(k);
-			if (prevIdx === undefined || (chunks[prevIdx].text || '').length < (c.text || '').length) frontMap.set(k, i);
+			let arr = frontMap.get(k);
+			if (!arr) { arr = []; frontMap.set(k, arr); }
+			arr.push(i);
 		}
 		cached = { chunks, matrix, dim, meta, frontMap };
 		log('索引已加载：' + chunks.length + ' 块' + (matrix ? '（含向量）' : '（无向量）') + '，摘要页 ' + frontMap.size + ' 篇');
@@ -468,12 +470,32 @@ var RetrievalIndex = (function () {
 			if (n >= 2) continue;
 			// 摘要页先验：该文献首次出现时，若其首页块也在候选池前段，则用首页块作代表段
 			// （实测案例：Barrett 2015 的综述段排第 1、摘要段仅排 18，导致 agent 拿综述段外推）
+			// 摘要页先验（只作用于首条结果，把影响面控到最小）：
+			// 实测 Barrett 2015 的综述段排第 1、真正含结果的摘要段排名很靠后，
+			// 导致 agent 只能拿综述段外推。故首条优先改用该篇的摘要块。
 			let emit = c;
-			if (n === 0 && idx.frontMap && idx.frontMap.has(tk)) {
-				const fi = idx.frontMap.get(tk);
-				const pos = posOf.get(fi);
-				const fc = idx.chunks[fi];
-				if (fi !== i && pos !== undefined && pos < 60 && fc && fc.text) emit = fc;
+			if (out.length === 0 && n === 0 && idx.frontMap && idx.frontMap.has(tk)) {
+				const cands = idx.frontMap.get(tk);
+				let pick = -1;
+				// 1) 优先含“摘要/abstract”标记的首页块（不要求它进候选池——全文都在手边）
+				for (const fi of cands) {
+					const fc = idx.chunks[fi];
+					const head = (fc && fc.text || '').slice(0, 220);
+					if (/摘要|abstract/i.test(head)) { pick = fi; break; }
+				}
+				// 2) 退回：首页块中排名最靠前的一块（须在候选池前 60 名内）
+				if (pick < 0) {
+					let bestCost = 60;
+					for (const fi of cands) {
+						if (fi === i) continue;
+						const pos = posOf.get(fi);
+						if (pos !== undefined && pos < bestCost) { bestCost = pos; pick = fi; }
+					}
+				}
+				if (pick >= 0 && pick !== i) {
+					const fc = idx.chunks[pick];
+					if (fc && fc.text) emit = fc;
+				}
 			}
 			const tkey = (emit.text || '').slice(0, 120);
 			if (seenText.has(tkey)) continue;
@@ -519,7 +541,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.9',
+					ok: true, plugin: 'retrieval-index', version: '0.1.10',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
