@@ -400,6 +400,9 @@ var RetrievalIndex = (function () {
 							parentKey: oc.parentKey || '', libraryID: oc.libraryID, title: oc.title,
 							retracted: !!oc.retracted, page: oc.page, pageSource: oc.pageSource,
 							role: oc.role || ((oc.page === 1) ? 'front' : ''),
+							// 兼容旧索引：字段缺失时从已有信息推导，避免增量后标记丢失
+							orphan: (oc.orphan !== undefined) ? !!oc.orphan : !oc.parentKey,
+							ocr: (oc.ocr !== undefined) ? !!oc.ocr : (oc.pageSource === 'ocr'),
 							text: oc.text
 						});
 						if (doEmbed && prev.dim) {
@@ -521,8 +524,24 @@ var RetrievalIndex = (function () {
 				vecData = packed.data; dimOut = packed.dim;
 				log('向量不齐，已补零 ' + pad + ' 条');
 			}
+			// 从最终 chunks 重新统计（增量构建时单次计数会失真）
+			let statOrphan = 0, statOcrChunks = 0, statRetracted = 0, statCache = 0;
+			const statParents = new Set(), statPapers = new Set();
+			for (const c of chunks) {
+				if (c.orphan) statOrphan++;
+				if (c.ocr || c.pageSource === 'ocr') statOcrChunks++;
+				if (c.retracted) statRetracted = 1;
+				if (c.pageSource === 'cache') statCache++;
+				statParents.add(c.parentKey || c.itemKey);
+				statPapers.add(c.itemKey);
+			}
+			ocrUsed = statOcrChunks > 0 ? Math.max(ocrUsed, new Set(chunks.filter(c => c.ocr || c.pageSource === 'ocr').map(c => c.itemKey)).size) : 0;
+			cacheRecovered = Math.max(cacheRecovered, statCache > 0 ? new Set(chunks.filter(c => c.pageSource === 'cache').map(c => c.itemKey)).size : 0);
+			retractedCount = statRetracted;
 			await saveIndex(chunks, vecData, dimOut, {
 				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
+				orphanChunks: statOrphan, ocrChunks: statOcrChunks, cacheChunks: statCache,
+				parents: statParents.size, papersById: statPapers.size,
 				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
 				cacheRecovered, retractedPapers: retractedCount, reused, itemVersions,
 				ocrUsed, ocrUsedKeys, failedItems, pageGaps,
@@ -750,7 +769,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.17',
+					ok: true, plugin: 'retrieval-index', version: '0.1.18',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}

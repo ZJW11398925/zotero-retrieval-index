@@ -211,6 +211,7 @@ def main():
     ap.add_argument('--max-pages', type=int, default=0, help='每篇最多 OCR 前 N 页（0=全部）')
     ap.add_argument('--probe-lang', action='store_true',
                     help='先 OCR 首页探测文字系统，只处理中文为主的文献（跳过韩/日文）')
+    ap.add_argument('--force', action='store_true', help='重做已有旁路')
     ap.add_argument('--budget-pages', type=int, default=0, help='累计 OCR 页数上限（0=不限）')
     args = ap.parse_args()
 
@@ -277,6 +278,12 @@ def main():
         if args.budget_pages and pages_done >= args.budget_pages:
             print('  已达页数预算 %d，停止' % args.budget_pages)
             break
+        # 已有旁路文件则跳过（除非 --force）
+        _out = os.path.join(ocr_dir, key + '.json')
+        if os.path.exists(_out) and not getattr(args, 'force', False):
+            print('  [%d/%d] %s 跳过：已有旁路' % (idx, len(jobs), key))
+            skipped += 1
+            continue
         t0 = time.time()
         try:
             # 语言探测：只处理中文为主的文献（zh-CN 引擎读不了韩/日）
