@@ -292,12 +292,21 @@ var RetrievalIndex = (function () {
 				const id = rec.id;
 				if (cancelRequested) { log('用户取消'); break; }
 				const item = Zotero.Items.get(id);
-				if (!item || !item.parentItemID) { done++; continue; }
+				if (!item) { done++; continue; }
 				used++;
+				// 孤立 PDF 附件（无父条目）也索引：以文件名为标题
+				const isOrphan = !item.parentItemID;
+				if (isOrphan && !item.isPDFAttachment()) { done++; continue; }
 				let parent = null, title = '';
 				try {
-					parent = Zotero.Items.get(item.parentItemID);
-					title = parent ? (parent.getField('title') || '') : '';
+					if (item.parentItemID) {
+						parent = Zotero.Items.get(item.parentItemID);
+						title = parent ? (parent.getField('title') || '') : '';
+					}
+					if (!title) {
+						title = item.getFilename ? (item.getFilename() || '') : (item.getField('title') || '');
+						title = String(title).replace(/\.pdf$/i, '');
+					}
 				} catch (e) {}
 				// 增量：条目版本未变则直接复用旧块与旧向量
 				const ver = item.version || 0;
@@ -371,7 +380,7 @@ var RetrievalIndex = (function () {
 				}
 				if (!pages.length) {
 					failed++; done++;
-					if (failedItems.length < 300) failedItems.push({ itemID: id, itemKey: item.key, title, reason: 'no_text' });
+					if (failedItems.length < 300) failedItems.push({ itemID: id, itemKey: item.key, title, reason: 'no_text', orphan: isOrphan });
 					continue;
 				}
 				if (pageSource !== 'ocr') {
@@ -392,7 +401,7 @@ var RetrievalIndex = (function () {
 				for (let i = 0; i < cs.length; i++) {
 					chunks.push({
 						cid: item.key + '#' + cs[i].page + '#' + i, itemKey: item.key, itemID: id,
-						parentKey, libraryID: rec.libraryID, title, retracted,
+						parentKey, libraryID: rec.libraryID, title, retracted, orphan: isOrphan,
 						page: pageUnknown ? 0 : cs[i].page,
 						pageSource,
 						role: (!pageUnknown && cs[i].page === 1) ? 'front' : '',
@@ -615,7 +624,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.13',
+					ok: true, plugin: 'retrieval-index', version: '0.1.14',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
