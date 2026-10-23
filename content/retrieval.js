@@ -876,7 +876,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.23',
+					ok: true, plugin: 'retrieval-index', version: '0.1.24',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -1023,6 +1023,96 @@ var RetrievalIndex = (function () {
 			}
 		};
 
+		// 管理接口：重复附件清理（默认 dry-run；apply 需 confirm 口令；只删附件、不删父条目、不删索引内条目）
+		// body: { dryRun?: true|false, confirm?: "DELETE-DUPLICATES", items: [{libraryID, key}, ...] }
+		Zotero.Server.Endpoints['/retrieval/admin/dedup'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/admin/dedup'].prototype = {
+			supportedMethods: ['POST'],
+			supportedDataTypes: ['application/json'],
+			init: async function (options) {
+				try {
+					const body = options.data || {};
+					const items = Array.isArray(body.items) ? body.items : [];
+					const apply = body.dryRun === false;
+					if (!items.length) {
+						return [400, 'application/json', JSON.stringify({ ok: false, error: '需要 items:[{libraryID,key}]' })];
+					}
+					if (items.length > 200) {
+						return [400, 'application/json', JSON.stringify({ ok: false, error: '单次最多 200 条，请分批' })];
+					}
+					if (apply && body.confirm !== 'DELETE-DUPLICATES') {
+						return [400, 'application/json', JSON.stringify({
+							ok: false,
+							error: 'apply 需要 confirm:"DELETE-DUPLICATES"（请先 dryRun 核对清单）'
+						})];
+					}
+					// 取当前索引的 itemKey 集合：索引内的附件一律拒绝删除，保护检索内容
+					let indexed = new Set();
+					try {
+						await loadIndex();
+						if (cached && cached.chunks) for (const c of cached.chunks) indexed.add(c.itemKey);
+					} catch (e) { log('dedup：读取索引失败，将拒绝 apply：' + e); }
+					const out = { ok: true, dryRun: !apply, results: [], backupPath: null, trashed: 0 };
+					const backup = [];
+					for (const spec of items) {
+						const r = { key: spec.key, libraryID: parseInt(spec.libraryID, 10) || 0, action: 'skip', reason: '' };
+						try {
+							const item = await Zotero.Items.getByLibraryAndKeyAsync(r.libraryID, spec.key);
+							if (!item) { r.reason = '找不到条目'; out.results.push(r); continue; }
+							r.title = item.getField('title');
+							r.itemType = item.itemType;
+							r.parentKey = item.parentKey || '';
+							r.deleted = !!item.deleted;
+							r.inIndex = indexed.has(spec.key);
+							if (item.deleted) { r.reason = '已在回收站，跳过'; out.results.push(r); continue; }
+							if (item.itemType !== 'attachment') { r.reason = '只允许删除附件条目（拒绝删父条目）'; out.results.push(r); continue; }
+							if (r.inIndex) { r.reason = '该附件在当前索引中，拒绝删除（保护检索内容）'; out.results.push(r); continue; }
+							if (!indexed.size && apply) { r.reason = '索引未加载，无法校验 inIndex，拒绝 apply'; out.results.push(r); continue; }
+							let snap = null;
+							try { snap = item.toJSON(); } catch (e) { snap = { key: item.key, libraryID: item.libraryID, title: r.title, parentKey: r.parentKey }; }
+							backup.push({ key: spec.key, libraryID: r.libraryID, version: item.version, snapshot: snap });
+							r.action = apply ? 'trashed' : 'would-trash';
+						} catch (e) {
+							r.reason = String((e && e.message) || e);
+						}
+						out.results.push(r);
+					}
+					if (apply) {
+						// 先落备份，再执行（任何一条失败都不影响已备份数据）
+						try {
+							out.backupPath = idxPath('admin-dedup-backup-' + Date.now() + '.json');
+							await Zotero.File.putContentsAsync(out.backupPath, JSON.stringify({
+								createdAt: new Date().toISOString(),
+								confirm: body.confirm,
+								count: backup.length,
+								items: backup
+							}, null, 1));
+						} catch (e) {
+							return [500, 'application/json', JSON.stringify({ ok: false, error: '备份写入失败，已中止（未删除任何条目）：' + (e.message || e), results: out.results })];
+						}
+						for (const r of out.results) {
+							if (r.action !== 'trashed') continue;
+							try {
+								const item = await Zotero.Items.getByLibraryAndKeyAsync(r.libraryID, r.key);
+								if (!item) { r.action = 'skip'; r.reason = '执行时找不到条目'; continue; }
+								item.deleted = true;
+								await item.saveTx();
+								out.trashed++;
+							} catch (e) {
+								r.action = 'error';
+								r.reason = String((e && e.message) || e);
+								out.ok = false;
+							}
+						}
+					}
+					log('dedup：' + (apply ? '已移入回收站 ' + out.trashed + ' 条' : 'dry-run ' + out.results.length + ' 条') + '，备份 ' + (out.backupPath || '（dry-run 不写）'));
+					return [200, 'application/json', JSON.stringify(out)];
+				} catch (e) {
+					return [500, 'application/json', JSON.stringify({ ok: false, error: String((e && e.message) || e) })];
+				}
+			}
+		};
+
 		Zotero.Server.Endpoints['/retrieval/ocr-candidates'] = function () {};
 		Zotero.Server.Endpoints['/retrieval/ocr-candidates'].prototype = {
 			supportedMethods: ['GET'],
@@ -1121,7 +1211,7 @@ var RetrievalIndex = (function () {
 	}
 
 	function unregisterEndpoints() {
-		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/protocol', '/retrieval/ocr-candidates', '/retrieval/admin/import', '/retrieval/admin/organize']) {
+		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/protocol', '/retrieval/ocr-candidates', '/retrieval/admin/import', '/retrieval/admin/organize', '/retrieval/admin/dedup']) {
 			try { delete Zotero.Server.Endpoints[p]; } catch (e) {}
 		}
 	}
