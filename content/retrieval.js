@@ -169,6 +169,30 @@ var RetrievalIndex = (function () {
 		return j.embeddings;
 	}
 
+	// 分批 + 重试 + 逐个兜底；失败的位返回 null（调用方补零向量，保证与 chunks 对齐）
+	async function embedSafe(texts, chunk = 32) {
+		const out = new Array(texts.length).fill(null);
+		for (let i = 0; i < texts.length; i += chunk) {
+			const slice = texts.slice(i, i + chunk);
+			let done = false;
+			for (let attempt = 0; attempt < 2 && !done; attempt++) {
+				try {
+					const e = await embedBatch(slice);
+					for (let j = 0; j < e.length; j++) out[i + j] = e[j];
+					done = true;
+				} catch (err) {
+					if (attempt === 1) {
+						for (let j = 0; j < slice.length; j++) {
+							try { out[i + j] = await embedOne(slice[j]); } catch (e2) { out[i + j] = null; }
+						}
+						done = true;
+					}
+				}
+			}
+		}
+		return out;
+	}
+
 	async function embedOne(text) {
 		const ts = timeoutSignal(20000);
 		try {
@@ -207,13 +231,67 @@ var RetrievalIndex = (function () {
 	}
 
 	// ---------------- 建索引 ----------------
-	async function build({ limit = 0, incremental = 0 } = {}) {
+	async function build({ limit = 0, incremental = 0, embedOnly = 0 } = {}) {
 		if (building) throw new Error('已有建索引任务在运行');
 		building = true;
 		cancelRequested = false;
 		buildState = { running: true, phase: 'scanning', processed: 0, total: 0, chunks: 0, failed: 0, startedAt: Date.now(), error: null };
 		const t0 = Date.now();
 		try {
+			// embedOnly：只给现有 chunks 补向量，不重抽文本
+			if (embedOnly) {
+				buildState.phase = 'embedding';
+				const chunksRaw = await readText('chunks.json');
+				if (!chunksRaw) throw new Error('没有现成索引可补向量');
+				const ex = JSON.parse(chunksRaw);
+				buildState.total = ex.length;
+				const doEmbed = await ollamaAvailable();
+				if (!doEmbed) throw new Error('Ollama 不可用，无法补向量');
+				const dimProbe = parseInt(getPref('embedDim', 1024), 10) || 1024;
+				const vecs = [];
+				let embedErrors = 0, doneE = 0;
+				const BATCH = 128;
+				for (let i = 0; i < ex.length; i += BATCH) {
+					if (cancelRequested) break;
+					const slice = ex.slice(i, i + BATCH);
+					const embs = await embedSafe(slice.map(c => c.text || ''));
+					for (const e of embs) {
+						if (e && e.length) vecs.push(e);
+						else { vecs.push(new Array(dimProbe).fill(0)); embedErrors++; }
+					}
+					doneE += slice.length;
+					buildState.processed = doneE;
+					buildState.phase = 'embedding';
+					if (Math.floor(doneE / BATCH) % 10 === 0) {
+						ui('补向量', doneE + '/' + ex.length);
+						await Zotero.Promise.delay(0);
+					}
+				}
+				const packed = RetrievalCore.packVectors(vecs);
+				await writeText('vectors.b64', (function () {
+					const q = new Int8Array(packed.data.length);
+					for (let i = 0; i < packed.data.length; i++) {
+						const v = Math.max(-1, Math.min(1, packed.data[i]));
+						q[i] = Math.round(v * 127);
+					}
+					const u8 = new Uint8Array(q.buffer, q.byteOffset, q.length);
+					let bin = '';
+					for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+					return btoa(bin);
+				})());
+				const metaRaw2 = await readText('meta.json');
+				const meta2 = metaRaw2 ? JSON.parse(metaRaw2) : {};
+				meta2.dim = packed.dim;
+				meta2.embedErrors = embedErrors;
+				meta2.embedOnlyAt = new Date().toISOString();
+				await writeText('meta.json', JSON.stringify(meta2));
+				cached = null; bm25 = null;
+				const secsE = ((Date.now() - t0) / 1000).toFixed(0);
+				buildState = Object.assign({}, buildState, { running: false, phase: 'done', chunks: ex.length, seconds: +secsE, hasVectors: true });
+				ui('补向量完成', ex.length + ' 块，用时 ' + secsE + ' 秒' + (embedErrors ? '，失败 ' + embedErrors : ''));
+				uiClose();
+				return { chunks: ex.length, embedErrors, seconds: +secsE, embedOnly: true };
+			}
 			// 扫描全部可访问库（个人库 + 群组库），否则会漏掉群组库里的文献
 			const libs = Zotero.Libraries.getAll().filter(l => l.libraryType === 'user' || l.libraryType === 'group');
 			const libraries = [];
@@ -411,9 +489,11 @@ var RetrievalIndex = (function () {
 				}
 				if (doEmbed && cs.length) {
 					try {
-						const embs = await embedBatch(cs.map(c => c.text));
-						if (embs[0]) dimOutProbe = embs[0].length;
-						for (const e of embs) vecs.push(e);
+						const embs = await embedSafe(cs.map(c => c.text));
+						for (const e of embs) {
+							if (e && e.length) { dimOutProbe = e.length; vecs.push(e); }
+							else { vecs.push(new Array(dimOutProbe || 1024).fill(0)); embedErrors++; }
+						}
 					} catch (e) { embedErrors++; log('向量化失败：' + e); }
 				}
 				done++;
@@ -431,6 +511,15 @@ var RetrievalIndex = (function () {
 			if (vecs.length && vecs.length === chunks.length) {
 				const packed = RetrievalCore.packVectors(vecs);
 				vecData = packed.data; dimOut = packed.dim;
+			} else if (vecs.length && chunks.length && vecs.length < chunks.length) {
+				// 补齐缺向量的块为 0，保证与 chunks 对齐（仍可用 BM25 命中）
+				const dimNow = vecs[0] ? vecs[0].length : 1024;
+				const pad = chunks.length - vecs.length;
+				for (let i = 0; i < pad; i++) vecs.push(new Array(dimNow).fill(0));
+				embedErrors += pad;
+				const packed = RetrievalCore.packVectors(vecs);
+				vecData = packed.data; dimOut = packed.dim;
+				log('向量不齐，已补零 ' + pad + ' 条');
 			}
 			await saveIndex(chunks, vecData, dimOut, {
 				builtAt: new Date().toISOString(), libraries, model: getPref('model', 'bge-m3'),
@@ -624,7 +713,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.14',
+					ok: true, plugin: 'retrieval-index', version: '0.1.15',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -711,8 +800,9 @@ var RetrievalIndex = (function () {
 					if (building) return [200, 'application/json', JSON.stringify({ started: false, busy: true, build: buildState })];
 					const limit = parseInt(o.searchParams.get('limit') || '0', 10) || 0;
 					const incremental = parseInt(o.searchParams.get('incremental') || '0', 10) || 0;
-					build({ limit, incremental }).catch(e => log('建索引失败：' + e));
-					return [200, 'application/json', JSON.stringify({ started: true, limit, incremental })];
+					const embedOnly = parseInt(o.searchParams.get('embedonly') || '0', 10) || 0;
+					build({ limit, incremental, embedOnly }).catch(e => log('建索引失败：' + e));
+					return [200, 'application/json', JSON.stringify({ started: true, limit, incremental, embedOnly })];
 				} catch (e) {
 					return [500, 'application/json', JSON.stringify({ error: String((e && e.message) || e) })];
 				}
