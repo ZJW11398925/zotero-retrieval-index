@@ -193,6 +193,18 @@ var RetrievalIndex = (function () {
 		return out;
 	}
 
+	// v0.1.27：embedding 输入 = 论文标题 + 块原文（截断 900 字符），补齐块内缺失的上下文。
+	// 离线验证（75 条金标，官方口径）：R@5 90.67%→92.00%、Hit@1 78.67%→80.00%、MRR +0.0139。
+	// 需要用 embedOnly 重建一次向量；回滚：pref extensions.zotero.retrieval.embedTitle=0 后重建。
+	function embedInputOf(c) {
+		const text = String((c && c.text) || '');
+		let withTitle = '1';
+		try { withTitle = String(getPref('embedTitle', 1)); } catch (e) {}
+		if (withTitle === '0' || withTitle === 'false') return text;
+		const title = String((c && c.title) || '').trim();
+		return (title ? (title + '\n' + text) : text).slice(0, 900);
+	}
+
 	async function embedOne(text) {
 		const ts = timeoutSignal(20000);
 		try {
@@ -272,7 +284,7 @@ var RetrievalIndex = (function () {
 				for (let i = 0; i < ex.length; i += BATCH) {
 					if (cancelRequested) break;
 					const slice = ex.slice(i, i + BATCH);
-					const embs = await embedSafe(slice.map(c => c.text || ''));
+					const embs = await embedSafe(slice.map(embedInputOf));
 					for (const e of embs) {
 						if (e && e.length) vecs.push(e);
 						else { vecs.push(new Array(dimProbe).fill(0)); embedErrors++; }
@@ -551,7 +563,7 @@ var RetrievalIndex = (function () {
 				}
 				if (doEmbed && cs.length) {
 					try {
-						const embs = await embedSafe(cs.map(c => c.text));
+						const embs = await embedSafe(cs.map(embedInputOf));
 						for (const e of embs) {
 							if (e && e.length) { dimOutProbe = e.length; vecs.push(e); }
 							else { vecs.push(new Array(dimOutProbe || 1024).fill(0)); embedErrors++; }
@@ -919,7 +931,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.26',
+					ok: true, plugin: 'retrieval-index', version: '0.1.27',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
