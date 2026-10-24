@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 83.6 MB，含 490 篇表格 sidecar；快照 2026-10-25；sha256 d45a14fa…）
+#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 83.6 MB，含 490 篇表格 sidecar；快照 2026-10-25；sha256 09f8ce83…；**交给队友 agent 可一键自动安装**）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -193,6 +193,15 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 工具在 `opt_eval/t14/`：`build_passage_gold.py`（重建后可重映射）、`passage_eval.py`（段落级 harness）、
 `phase_c_metrics.py`（参数 A/B）、`paper_quick.py`、`cross_table.py`，报告 `T14_REPORT.md`。
 参数结论：**rrfK=30**、**abstractPrior=0**（摘要页先验实测为负收益）、**capPerPaper=2**；k 建议见协议文档（默认 k=8）。
+
+## 交给队友 agent 一键自动安装（v0.1.52）
+
+分发包内含 `AGENT.md`（给 agent 的执行手册）+ `agent_setup.ps1`（幂等一键脚本）。队友只需把解压目录交给自己的 agent，agent 执行：
+`powershell -ExecutionPolicy Bypass -File .\agent_setup.ps1 -Yes`
+
+脚本自动：装 Zotero（winget/官方安装器）→ 写 user.js（未签名插件豁免 + 自动增量 pref）→ 把 xpi 放进 profile/extensions（**无需点 UI**）→ 关闭 Zotero 部署索引 → 启动并等待插件 → 装 Ollama+bge-m3 → 开启自动增量（90s/60min）→ 自检+检索冒烟，输出 JSON（`agent_setup_result.json`，含 ok/steps/blocked）。
+新增 `/retrieval/env` 接口（库/群组、Ollama、索引、pref），供 agent 判断环境。
+实测（全新 profile）：`ok=true`，verify **PASS 20 / WARN 0 / FAIL 0**，二次运行幂等通过。
 
 ## 团队实时更新索引（v0.1.51）
 

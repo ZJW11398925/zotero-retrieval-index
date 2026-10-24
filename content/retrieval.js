@@ -1177,8 +1177,40 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.51',
+					ok: true, plugin: 'retrieval-index', version: '0.1.52',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
+				})];
+			}
+		};
+
+		// v0.1.52：环境自检接口（供团队 agent 自动安装/诊断使用）
+		Zotero.Server.Endpoints['/retrieval/env'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/env'].prototype = {
+			supportedMethods: ['GET'],
+			init: async function (options) {
+				let libs = [];
+				try {
+					libs = Zotero.Libraries.getAll()
+						.filter(l => l.libraryType === 'user' || l.libraryType === 'group')
+						.map(l => ({ id: l.libraryID, name: l.name, type: l.libraryType }));
+				} catch (e) {}
+				let ollamaOnline = false;
+				try { ollamaOnline = await ollamaAvailable(); } catch (e) {}
+				let idx = { loaded: false };
+				try { idx = stats(); } catch (e) {}
+				return [200, 'application/json', JSON.stringify({
+					ok: true, plugin: 'retrieval-index', version: '0.1.52',
+					zoteroVersion: (Zotero.version || ''), dataDir,
+					libraries: libs,
+					ollama: { online: ollamaOnline, base: ollamaBase() },
+					index: { loaded: !!idx.loaded, chunks: idx.chunks || 0, papers: idx.papers || 0,
+						hasVectors: !!idx.hasVectors, builtAt: (idx.meta && idx.meta.builtAt) || null },
+					prefs: {
+						autoIncremental: getPref('autoIncremental', 1),
+						autoIncrementalDelaySec: getPref('autoIncrementalDelaySec', 90),
+						autoIncrementalMinutes: getPref('autoIncrementalMinutes', 0)
+					},
+					ts: new Date().toISOString()
 				})];
 			}
 		};
