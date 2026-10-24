@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "generated_by": "tools/smoke_test.py --freeze",
-  "frozen_at": "2026-10-24T08:01:46+08:00",
+  "frozen_at": "2026-10-24T11:17:27+08:00",
   "base_url": "http://127.0.0.1:23119",
   "plugin": "retrieval-index",
   "plugin_version": "0.1.24",
   "k": 5,
   "mode": "hybrid",
   "stats": {
-    "chunks": 58590,
-    "papers": 768,
+    "chunks": 59528,
+    "papers": 791,
     "dim": 1024,
     "model": "bge-m3"
   },
