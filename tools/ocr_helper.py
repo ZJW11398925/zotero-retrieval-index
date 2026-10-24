@@ -314,14 +314,16 @@ def main():
         # 显式指定 keys 时无需扫库，直接按“整篇 OCR”建任务
         failed = [{'itemKey': k, 'title': ''} for k in want]
         blank = {}
-        ocr_dir = os.path.join(os.environ['APPDATA'], 'Zotero', 'Zotero', 'Profiles',
-                               'default', 'retrieval-index', 'ocr')
+        sys.path.insert(0, TOOLS_DIR)
+        from zotero_paths import find_sidecar_dir
+        ocr_dir = find_sidecar_dir('ocr')
     elif args.scan:
         print('扫描 storage（约 2 分钟）...')
         failed, blank_list = scan_storage()
         blank = {it['itemKey']: it['pages'] for it in blank_list}
-        ocr_dir = os.path.join(os.environ['APPDATA'], 'Zotero', 'Zotero', 'Profiles',
-                               'default', 'retrieval-index', 'ocr')
+        sys.path.insert(0, TOOLS_DIR)
+        from zotero_paths import find_sidecar_dir
+        ocr_dir = find_sidecar_dir('ocr')
     else:
         data = fetch_candidates()
         ocr_dir = data['ocrDir']

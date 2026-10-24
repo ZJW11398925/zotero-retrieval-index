@@ -3,7 +3,7 @@
   "name": "Retrieval Index",
   "version": "0.1.52",
   "description": "Build a page-aware passage index for your local Zotero library and expose it over Zotero's local HTTP server.",
-  "author": "the-group",
+  "author": "ZJW11398925",
   "icons": {
     "48": "chrome/content/icons/favicon@0.5x.png",
     "96": "chrome/content/icons/favicon.png"

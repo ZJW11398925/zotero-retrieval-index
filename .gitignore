@@ -1,6 +1,24 @@
-﻿*.xpi
+*.xpi
 *.zip
 __pycache__/
 *.pyc
 .DS_Store
 node_modules/
+
+# local index / data
+retrieval-index/
+retrieval-index.bak-*
+rr_model/
+eval_pages/
+dist/
+*.log
+*.tmp
+
+# helper outputs
+agent_setup.log
+agent_setup_result.json
+tools/ocr_skip.json
+
+# env
+.venv/
+.env

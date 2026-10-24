@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-build:
+    name: Syntax checks and XPI build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: JavaScript syntax check
+        run: |
+          node --check bootstrap.js
+          node --check prefs.js
+          for f in content/*.js; do node --check "$f"; done
+
+      - name: Python syntax check
+        run: python -m compileall -q tools
+
+      - name: Build XPI
+        run: python build.py
+
+      - name: Upload XPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-index-xpi
+          path: retrieval-index-*.xpi
+          if-no-files-found: error
+
+      - name: JSON validation
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          for p in pathlib.Path('.').glob('*.json'):
+              json.loads(p.read_text(encoding='utf-8'))
+          print('JSON files OK')
+          PY

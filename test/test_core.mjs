@@ -1,13 +1,17 @@
-// 用真实逐页语料验证 core.js：分词、分块、BM25 召回
+// Unit tests for core.js: tokenizer, chunker, BM25 (fixtures from ZOTERO_EVAL_DIR)
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const C = require('../content/core.js');
 
-const DIR = 'D:/workspace/eval_pages';
+const DIR = process.env.ZOTERO_EVAL_DIR || '';
+if (!DIR || !fs.existsSync(`${DIR}/chunks.jsonl`)) {
+	console.log('SKIP: set ZOTERO_EVAL_DIR to a directory containing chunks.jsonl and queries.json');
+	process.exit(0);
+}
 const chunks = fs.readFileSync(`${DIR}/chunks.jsonl`, 'utf8').trim().split('\n').map(JSON.parse);
 const Q = JSON.parse(fs.readFileSync(`${DIR}/queries.json`, 'utf8'));
-console.log(`语料 ${chunks.length} 块 / ${new Set(chunks.map(c => c.pid)).size} 篇`);
+console.log(`corpus: ${chunks.length} chunks / ${new Set(chunks.map(c => c.pid)).size} documents`);
 
 // 1) 分词抽样
 console.log('\n=== 分词抽样 ===');

@@ -19,10 +19,10 @@ var RetrievalIndex = (function () {
 		// aggW2：篇级聚合第二块权重。离线（Node ICU）w=0.4 有增益，但线上（Zotero/Firefox ICU）
 		// 实测 w=0 最好（92.00% vs 89.33% R@5），故默认 0；需要时可临时调回。
 		aggW2: { min: 0, max: 2, def: 0 },
-		rrfK: { min: 1, max: 500, def: 30 },      // RRF 平滑常数（T14 段落级验证：30 优于 60，篇级不掉）
+		rrfK: { min: 1, max: 500, def: 30 },      // RRF smoothing constant (validated to work well at 30)
 		wBm25: { min: 0, max: 5, def: 1 },        // BM25 路权重
 		wDense: { min: 0, max: 5, def: 1 },       // 向量路权重
-		// T14 Phase C 实测（插件真实接口，段落级金标）：摘要页先验是负收益——
+		// Empirical evaluation (passage-level benchmark): abstract prior was negative --
 		// 开：P@1 41.5% / P@5 61.0%；关：P@1 53.7% / P@5 73.2%（篇级指标不变）。
 		// 结论：默认关闭；保留开关便于个别场景回滚验证。
 		abstractPrior: { min: 0, max: 1, def: 0 },

@@ -19,8 +19,10 @@ import shutil
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8')
-LIVE_INDEX = os.path.join(os.environ['APPDATA'], 'Zotero', 'Zotero', 'Profiles',
-                          'default', 'retrieval-index')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from zotero_paths import find_index_dir  # noqa: E402
+
+LIVE_INDEX = find_index_dir()
 CAPNUM = re.compile(r'(表|Table)\s*([0-9]+(?:[-–.][0-9]+)?)', re.I)
 CONT = re.compile(r'续|continued', re.I)
 

@@ -15,8 +15,10 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8')
-LIVE_INDEX = os.path.join(os.environ['APPDATA'], 'Zotero', 'Zotero', 'Profiles',
-                          'default', 'retrieval-index')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from zotero_paths import find_index_dir  # noqa: E402
+
+LIVE_INDEX = find_index_dir()
 PATH_KEYS = ('source', 'sourcePath', 'path', 'file', 'localPath', 'absPath', 'pdfPath')
 ABS = re.compile(r'^[A-Za-z]:[\\/]|^/[A-Za-z]/|^\\\\')
 

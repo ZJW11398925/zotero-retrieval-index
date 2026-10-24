@@ -12,6 +12,7 @@
 import argparse
 import json
 import os
+import tempfile
 import sys
 import threading
 import time
@@ -19,7 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-MODEL = os.environ.get('RERANK_MODEL_DIR') or r'D:\workspace\opt_eval\t14\rr_model'
+MODEL = os.environ.get('RERANK_MODEL_DIR') or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', 'rr_model')
 _state = {'model': None, 'tok': None, 'device': None, 'max_len': 512}
 _lock = threading.Lock()
 
@@ -100,7 +102,7 @@ def main():
     ap.add_argument('--port', type=int, default=8898)
     ap.add_argument('--max-len', type=int, default=512)
     ap.add_argument('--batch', type=int, default=16)
-    ap.add_argument('--log', default=os.environ.get('RERANK_LOG') or r'D:\workspace\opt_eval\t14\rerank_service.log')
+    ap.add_argument('--log', default=os.environ.get('RERANK_LOG') or os.path.join(tempfile.gettempdir(), 'rerank_service.log'))
     args = ap.parse_args()
     # 无控制台启动（pythonw）时把 stdout/stderr 写入日志，便于排查
     try:

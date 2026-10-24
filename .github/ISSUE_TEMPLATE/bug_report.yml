@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible problem with the plugin
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please remove private file paths and document text from logs before posting.
+        For security issues, do **not** open a public issue — see SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: From `/retrieval/ping`
+      placeholder: "0.1.52"
+    validations:
+      required: true
+
+  - type: input
+    id: zotero
+    attributes:
+      label: Zotero version
+      placeholder: "10.0.6"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 23H2 / macOS 15 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Build an index with …
+        2. Query `/retrieval/search?q=…`
+        3. Observe …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and logs
+      description: Relevant output from Help → Debug Output Logging (scrub private data).
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: I removed private data from the report
+          required: true

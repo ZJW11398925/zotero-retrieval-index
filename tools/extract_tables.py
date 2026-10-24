@@ -21,7 +21,10 @@ import pymupdf
 
 sys.stdout.reconfigure(encoding='utf-8')
 STORAGE = os.path.expanduser(r'~\Zotero\storage')
-IDX = os.path.join(os.environ['APPDATA'], 'Zotero', 'Zotero', 'Profiles', 'default', 'retrieval-index')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from zotero_paths import find_index_dir  # noqa: E402
+
+IDX = find_index_dir()
 DEFAULT_OUT = os.path.join(IDX, 'tables')
 CAP_RE = re.compile(r'(表\s*\d+|Table\s*\d+|续表)')
 
