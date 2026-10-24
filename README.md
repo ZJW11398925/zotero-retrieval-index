@@ -199,7 +199,7 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 | 项 | 说明 |
 |---|---|
 | 模型 | `bge-reranker-base`（PyTorch fp16，约 1.1GB，放 `D:\workspace\opt_eval\t14\rr_model`，**不随团队包分发**）|
-| 服务 | `python tools/rerank_service.py`（127.0.0.1:8898）或 `powershell -File tools/start_rerank_service.ps1`；**已配置开机自启**（启动文件夹 `RerankService.lnk`，脚本用 Win32_Process.Create 派生、不阻塞）|
+| 服务 | `python tools/rerank_service.py`（127.0.0.1:8898）或 `powershell -File tools/start_rerank_service.ps1`；**已配置开机自启**（启动文件夹 `RerankService.lnk`）+ **watchdog 计划任务**（每 5 分钟健康检查，失败自动拉起，脚本 `tools/rerank_watchdog.ps1`）|
 | 插件开关 | `curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=rerank&value=1&confirm=TUNE"`（关：`reset=1`）|
 | 兼容性 | 服务不可用时自动跳过并回落（1.2s 超时 + 60s 内不再尝试），不影响检索；默认关闭 |
 | 开销 | GPU 打分 34–66ms（N=10/20），实测端到端 **+69ms/查询**（k=8）|
