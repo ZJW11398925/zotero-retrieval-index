@@ -141,12 +141,35 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.26 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
+#       v0.1.31 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
 - 队友三步：设 `xpinstall.signatures.required=false` → 装 xpi 重启 → 关 Zotero 跑 `deploy_index.ps1 -Force`，再跑 `verify_install.ps1`（17 项自检）
 - kit 源文件在 `tools/team-kit/`（部署脚本、校验脚本、使用说明），打包脚本会注入快照日期并生成 SHA256 清单
+
+## 线上调参（v0.1.28+，无需重装）
+
+检索参数已做成 pref，**改完立即生效**，并可通过受控端点设置（白名单 + 范围校验）：
+
+```bash
+# 查看当前生效值/范围
+curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune"
+
+# 设置（写操作需 confirm=TUNE）：aggW2 / rrfK / wBm25 / wDense
+curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&value=0&confirm=TUNE"
+
+# 恢复默认
+curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=1&confirm=TUNE"
+```
+
+| 参数 | 含义 | 范围 | 默认 |
+|---|---|---|---|
+| `aggW2` | 篇级聚合第二块权重 | 0–2 | **0**（线上实测最优；离线结论 0.4 在 Firefox-ICU 下反而拖累 R@5）|
+| `rrfK` | RRF 平滑常数 | 1–500 | 60 |
+| `wBm25` / `wDense` | 两路权重 | 0–5 | 1 / 1 |
+
+自动部署脚本：`tools/deploy_xpi.ps1 <xpi路径>`（关 Zotero → 备份旧 xpi → 替换 → 重启 → 等插件响应），改代码后一条命令上线。
 
 ## 维护接口：重复附件清理（v0.1.24+）
 
@@ -328,7 +351,7 @@ manifest.json  bootstrap.js  prefs.js  content/  chrome/
 - OCR 已覆盖 **中/韩/日/英** 四语（67 篇 / 9,912 页，含历史批次）；剩余 20 篇无法 OCR（storage 缺 PDF）；韩/日/英需对应 OCR 语言包（本机已装 zh-CN / ko-KR / ja-JP / en-US）
 - **v0.1.25 修复**：`titlePoor()` 的两轮循环曾使 **60/835 篇低信息标题文献（4,023 块，含 AIC2016–2023 翻译 8 篇）在任何查询下都不返回**（插件真实 R@5 82.67%）；改为单轮输出后 **R@5 82.67%→88.00%**、Hit@1 70.67%→73.33%，AIC2017 等恢复 rank 1，详见 `docs/t7-reranker-validation.md`
 - **v0.1.26 新增**：篇级聚合重排（论文前两块 RRF 分数按 `s1 + 0.4·s2` 排序）——单块勉强命中的文献不再压过多块互相印证的文献；插件真实接口 **R@5 88.00%→90.67%、Hit@1 73.33%→78.67%**（=官方模拟同口径），冒烟重冻 PASS 16
-- **v0.1.27 新增**：上下文增强 embedding——建索引时把「论文标题 + 块原文」作为 embedding 输入（截断 900 字符）。离线官方评估 R@5 90.67%→92.00%、Hit@1 78.67%→80.00%；**插件真实接口实测** R@5 90.67%→89.33%（1 条查询噪声级）、Hit@1 78.67%→**81.33%**、MRR 0.8384→**0.8526**。注意：离线评估用 Node ICU 分词、插件用 Firefox ICU，个别查询排序不同，上线前须用插件真实回放复核。回滚：extensions.zotero.retrieval.embedTitle=0 + GET /retrieval/build?embedonly=1
+- **v0.1.27 新增**：上下文增强 embedding——建索引时把「论文标题 + 块原文」作为 embedding 输入（截断 900 字符）。离线官方评估 R@5 90.67%→92.00%；**线上实测（v0.1.31 调参后）R@5 92.00%、Hit@1 81.33%、MRR 0.8522**。注意：离线评估用 Node ICU 分词、插件用 Firefox ICU，个别查询排序不同，上线前须用插件真实回放复核（见 `opt_eval/t11/T13_REPORT.md`）
 - 部分 PDF 文本层本身是 OCR 结果，质量参差
 
 > 已实现（v0.1.19+）：**增量更新**——启动 90 秒后自动跑增量，无变更约 3 秒短路；手动 `GET /retrieval/build?incremental=1`。
