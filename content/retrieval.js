@@ -763,8 +763,13 @@ var RetrievalIndex = (function () {
 		const out = [];
 		const perPaper = new Map();          // 按父条目去重（同一文献多个 PDF 副本）
 		const seenText = new Set();          // 完全相同的片段只留一条
-		let skippedRetracted = 0, skippedOrphans = 0;
-		for (let pass = 1; pass <= 2; pass++) {
+		let skippedRetracted = 0, skippedOrphans = 0, poorTitleSeen = 0;
+		// 单轮输出，按融合排序依次取块（cap2/去重/摘要页先验不变）。
+		// 历史坑（v0.1.25 修复）：旧实现是「两轮循环 + 第一轮跳过低信息量标题(titlePoor)」，
+		// 但第一轮就把 kk 个名额填满 → 第二轮永远不执行 → 标题被判 titlePoor 的文献
+		// （扫描件/翻译稿文件名，如 "AIC2017翻译"、"document"）在检索里完全不可见。
+		// 实测 60/835 篇、4,023 块受影响；插件真实 R@5 从 90.67% 掉到 82.67%。
+		// 现在不再排除，完全交给内容相关性排序（titlePoor 仅保留统计用途）。
 		for (const [i] of ranked) {
 			if (out.length >= kk) break;
 			const c = idx.chunks[i];
@@ -774,7 +779,7 @@ var RetrievalIndex = (function () {
 			if (!useOrphans && c.orphan) { skippedOrphans++; continue; }
 			const pk = resolveParentKey(c);
 			const ctitle = cleanTitle(c.title);
-			if (pass === 1 && titlePoor(c.title)) continue;   // 第一轮跳过低信息量标题
+			if (titlePoor(c.title)) poorTitleSeen++;
 			const tk = titleKeyOf(ctitle) || pk;   // 同标题不同条目也视为同一文献
 			const n = perPaper.get(tk) || 0;
 			if (n >= 2) continue;
@@ -814,7 +819,6 @@ var RetrievalIndex = (function () {
 					? (ec.text || '').slice(0, full ? 3000 : 1200) + '…'
 					: (ec.text || '')
 			});
-		}
 		}
 		if (skippedRetracted) log('已过滤撤稿文献 ' + skippedRetracted + ' 条（includeRetracted=1 可查看）');
 
@@ -876,7 +880,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.24',
+					ok: true, plugin: 'retrieval-index', version: '0.1.25',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
