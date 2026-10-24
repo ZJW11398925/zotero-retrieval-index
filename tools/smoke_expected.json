@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "generated_by": "tools/smoke_test.py --freeze",
-  "frozen_at": "2026-10-24T11:17:27+08:00",
+  "frozen_at": "2026-10-24T14:59:15+08:00",
   "base_url": "http://127.0.0.1:23119",
   "plugin": "retrieval-index",
-  "plugin_version": "0.1.24",
+  "plugin_version": "0.1.25",
   "k": 5,
   "mode": "hybrid",
   "stats": {
@@ -18,13 +18,20 @@
       "qid": "q1",
       "q": "儿童色彩偏好随年龄变化的规律是什么？",
       "top1": {
-        "itemKey": "6NUQYGF3",
-        "parentKey": "6NUQYGF3",
-        "title": "儿童友好城市的色彩环境规划设计研究",
-        "page": 4,
-        "pageSource": "pdf"
+        "itemKey": "B6FGD7PJ",
+        "parentKey": "B6FGD7PJ",
+        "title": "200000505267_20230710232410-1-92 zh",
+        "page": null,
+        "pageSource": "cache"
       },
       "top5": [
+        {
+          "itemKey": "B6FGD7PJ",
+          "parentKey": "B6FGD7PJ",
+          "title": "200000505267_20230710232410-1-92 zh",
+          "page": null,
+          "pageSource": "cache"
+        },
         {
           "itemKey": "6NUQYGF3",
           "parentKey": "6NUQYGF3",
@@ -52,13 +59,6 @@
           "title": "儿童友好城市的色彩环境规划设计研究",
           "page": 2,
           "pageSource": "pdf"
-        },
-        {
-          "itemKey": "GPIC2G8V",
-          "parentKey": "GPIC2G8V",
-          "title": "颜色偏好对青春期儿童家具选择的影响【搜狗文档翻译_译文_英译中】",
-          "page": 2,
-          "pageSource": "pdf"
         }
       ]
     },
@@ -81,6 +81,13 @@
           "pageSource": "pdf"
         },
         {
+          "itemKey": "B6FGD7PJ",
+          "parentKey": "B6FGD7PJ",
+          "title": "200000505267_20230710232410-1-92 zh",
+          "page": null,
+          "pageSource": "cache"
+        },
+        {
           "itemKey": "IML7LTMS",
           "parentKey": "FPSIHZQU",
           "title": "Pink for Girls, Red for Boys, and Blue for Both Genders: Colour Preferences in Children and Adults（女孩偏爱粉色、男孩偏爱红色、两性均偏爱蓝色：儿童与成人的色彩偏好）",
@@ -99,13 +106,6 @@
           "parentKey": "GPIC2G8V",
           "title": "颜色偏好对青春期儿童家具选择的影响【搜狗文档翻译_译文_英译中】",
           "page": 2,
-          "pageSource": "pdf"
-        },
-        {
-          "itemKey": "7AR7LX33",
-          "parentKey": "RYVDCMJS",
-          "title": "Investigating the Gender-based Colour Preference in Children（儿童色彩偏好的性别差异研究）",
-          "page": 5,
           "pageSource": "pdf"
         }
       ]
@@ -162,18 +162,32 @@
       "qid": "q4",
       "q": "小学教室或走廊的墙面色彩如何影响学生的行为与注意力？",
       "top1": {
-        "itemKey": "ZVPZDERK",
-        "parentKey": "ZVPZDERK",
-        "title": "色彩在小学建筑立面设计中的应用与研究",
+        "itemKey": "AYZJLH4P",
+        "parentKey": "AYZJLH4P",
+        "title": "AIC2017翻译",
         "page": 1,
         "pageSource": "pdf"
       },
       "top5": [
         {
-          "itemKey": "ZVPZDERK",
-          "parentKey": "ZVPZDERK",
-          "title": "色彩在小学建筑立面设计中的应用与研究",
+          "itemKey": "AYZJLH4P",
+          "parentKey": "AYZJLH4P",
+          "title": "AIC2017翻译",
           "page": 1,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "VGQ2IYBU",
+          "parentKey": "VGQ2IYBU",
+          "title": "55908383 zh",
+          "page": 1,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "PB9S5V9Q",
+          "parentKey": "PB9S5V9Q",
+          "title": "AIC2023翻译",
+          "page": 38,
           "pageSource": "pdf"
         },
         {
@@ -188,20 +202,6 @@
           "parentKey": "RYTNMXD8",
           "title": "有利于注意力过程的物理学习环境：空白空间、色彩和亲自然设计的影响",
           "page": 18,
-          "pageSource": "pdf"
-        },
-        {
-          "itemKey": "MVHWDRWN",
-          "parentKey": "DRI6G2XL",
-          "title": "The influence of color on student emotion, heart rate, and performance in learning environments（学习环境中色彩对学生情绪、心率与表现的影响）",
-          "page": 2,
-          "pageSource": "pdf"
-        },
-        {
-          "itemKey": "IA8G7PIJ",
-          "parentKey": "IA8G7PIJ",
-          "title": "참여디자인을 적용한 학교 환경색채연구 -초등학교, 중학교 색채계획을 중심으로- zh（应用参与式设计的学校环境色彩研究：以小学和中学色彩规划为中心）",
-          "page": 10,
           "pageSource": "pdf"
         }
       ]
@@ -287,18 +287,18 @@
           "pageSource": "cache"
         },
         {
+          "itemKey": "3U76DG38",
+          "parentKey": "3U76DG38",
+          "title": "AIC2018翻译",
+          "page": 27,
+          "pageSource": "pdf"
+        },
+        {
           "itemKey": "CQP84GM2",
           "parentKey": "6VPCJ24T",
           "title": "空间布艺色彩设计对ADHD儿童注意缺陷行为的改善",
           "page": 3,
           "pageSource": "pdf"
-        },
-        {
-          "itemKey": "6I29LKGI",
-          "parentKey": "QBHTZTW4",
-          "title": "Young Children’s Color Preferences in the Interior Environment（室内环境中幼儿的色彩偏好）",
-          "page": null,
-          "pageSource": "cache"
         }
       ]
     }
