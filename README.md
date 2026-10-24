@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 72.8 MB，含 454 篇表格 sidecar；sha256 7080653a…）
+#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 83.6 MB，含 490 篇表格 sidecar；快照 2026-10-25；sha256 f1ac05f8…）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -193,6 +193,15 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 工具在 `opt_eval/t14/`：`build_passage_gold.py`（重建后可重映射）、`passage_eval.py`（段落级 harness）、
 `phase_c_metrics.py`（参数 A/B）、`paper_quick.py`、`cross_table.py`，报告 `T14_REPORT.md`。
 参数结论：**rrfK=30**、**abstractPrior=0**（摘要页先验实测为负收益）、**capPerPaper=2**；k 建议见协议文档（默认 k=8）。
+
+## 文献库增长后的索引更新（v0.1.50，2026-10-25）
+
+群组新增文献后：自动增量会把「已就绪的 PDF」并入（本次 59,528→69,496 块，+72 篇）；
+但同步中/当时未下载完的 PDF 会以 no_text 失败，且失败不会被指纹变化的增量自动重试。
+补齐办法：`opt_eval/t14/backfill_text_sidecars.py` 给「有文本层但未入索引」的文献写文本旁路（本次 63 篇），
+纯扫描件用 `tools/ocr_helper.py --keys ...` OCR（本次 8 篇因韩/日文 OCR 质量不达标未纳入），再触发一次增量。
+本轮结果：69,496 块 / 915 篇 / 表格 492 篇(2,870 张) / OCR 130 篇。
+旧金标指标：R@5 90.67%（副本别名后 92.00%）、H@1 76.00%、MRR 0.8130；抽查 18 条 H@1 变化样本，top1 多数仍高度相关（金标是旧快照的单目标，新增文献会改变排序）。
 
 ## 无 Ollama 时的质量代价（实测 2026-10-24）
 
