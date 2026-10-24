@@ -30,7 +30,9 @@ var RetrievalIndex = (function () {
 		// v0.1.36：可选重排（本地 GPU 服务）。离线验证：N=20,w=0.6 → 段落 P@1 +9.7pp / P@5 +7.3pp，篇级不降。
 		rerank: { min: 0, max: 1, def: 0 },       // 1=启用（需本地服务运行）
 		rerankN: { min: 1, max: 50, def: 10 },    // 重排候选数（A/B：N=10 首段更好且延迟更低）
-		rerankW: { min: 0, max: 1, def: 0.6 }     // 重排分权重（与原始名次 RRF 融合）
+		rerankW: { min: 0, max: 1, def: 0.6 },    // 重排分权重（与原始名次 RRF 融合）
+		tableSupplement: { min: 0, max: 1, def: 1 },   // 表格补充段（不参与排序，仅补已召回论文的表内容）
+		tableSupplementMax: { min: 0, max: 5, def: 2 } // 每次最多追加几条表格补充段
 	};
 	const tuneNum = (key) => {
 		const spec = TUNE_SPEC[key] || { min: 0, max: 1e9, def: 0 };
@@ -91,6 +93,48 @@ var RetrievalIndex = (function () {
 	async function readAbs(path) {
 		try { return await Zotero.File.getContentsAsync(path); }
 		catch (e) { return null; }
+	}
+
+	// v0.1.42：表格旁路按需读取（不进入排序，仅作为已召回论文的补充段）
+	const tableSidecarCache = new Map();
+	async function readTableSidecar(itemKey) {
+		if (!itemKey) return null;
+		if (tableSidecarCache.has(itemKey)) return tableSidecarCache.get(itemKey);
+		let val = null;
+		try {
+			const raw = await readAbs(dataDir + '\\tables\\' + itemKey + '.json');
+			if (raw) val = JSON.parse(raw);
+		} catch (e) { val = null; }
+		if (tableSidecarCache.size > 800) tableSidecarCache.clear();
+		tableSidecarCache.set(itemKey, val);
+		return val;
+	}
+
+	// v0.1.43/45：过滤“图/表目录”等伪表格（PDF 里常见把插图目录误判成表格）
+	function isJunkTable(t) {
+		const md = String((t && t.markdown) || '');
+		if (md.length < 30) return true;
+		const rows = md.split('\n').filter((x) => x.trim().startsWith('|') && !/^\|\s*-{2,}/.test(x.trim()));
+		if (rows.length < 2) return true;
+		let cells = 0, labelCells = 0, empty = 0, contentCells = 0;
+		const labelRe = /^(图|表|Fig\.?|Table)\s*[\d一二三四五六七八九十.\-、\s]+$/i;
+		for (const r of rows) {
+			for (const c of r.split('|').slice(1, -1)) {
+				const s = c.trim();
+				cells++;
+				if (!s) { empty++; continue; }
+				const cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+				if (cjk >= 2 || s.length >= 6) contentCells++;
+				if (labelRe.test(s)) labelCells++;
+			}
+		}
+		if (!cells) return true;
+		if (empty / cells > 0.85) return true;
+		const nonEmpty = cells - empty;
+		if (nonEmpty > 0 && labelCells / nonEmpty > 0.4) return true;
+		// 实质内容不足（全是“图1-1”这类短标签）也判伪表格
+		if (nonEmpty > 0 && contentCells / nonEmpty < 0.3) return true;
+		return false;
 	}
 
 	async function writeText(name, text) {
@@ -418,6 +462,14 @@ var RetrievalIndex = (function () {
 			const pageGaps = {};
 			const ocrDir = dataDir + '\\ocr';
 			const ocrUsedKeys = [];
+			// v0.1.42：表格旁路（tools/extract_tables.py 生成 tables/<key>.json + _manifest.json）
+			//  默认**不**并入索引排序（实测会稀释篇级排序：R@5 92→89.33），仅在查询时作为补充段附加；
+			//  如需把表格块写入索引（实验用），设 pref tableChunksBuild=1 后重建。
+			const tablesDir = dataDir + '\\tables';
+			const buildTableChunks = parseInt(getPref('tableChunksBuild', 0), 10) > 0;
+			let tableKeys = new Set();
+			let tableUsed = 0, tableChunks = 0;
+			const tableUsedKeys = [];
 			// 只读一次清单，避免对上千个条目逐个试读旁路文件
 			const ocrManifestRaw = await readAbs(ocrDir + '\\_manifest.json');
 			let ocrKeys = new Set();
@@ -427,6 +479,15 @@ var RetrievalIndex = (function () {
 					ocrKeys = new Set((mj && mj.keys) || []);
 					log('OCR 旁路可用：' + ocrKeys.size + ' 篇');
 				} catch (e) { log('OCR 清单解析失败：' + e); }
+			}
+			// v0.1.41：表格旁路清单
+			const tablesManifestRaw = await readAbs(tablesDir + '\\_manifest.json');
+			if (tablesManifestRaw) {
+				try {
+					const mt = JSON.parse(tablesManifestRaw);
+					tableKeys = new Set((mt && mt.keys) || []);
+					log('表格旁路可用：' + tableKeys.size + ' 篇');
+				} catch (e) { log('表格清单解析失败：' + e); }
 			}
 
 			// 增量模式：读取旧索引，按条目版本号复用未变更的块与向量
@@ -491,10 +552,13 @@ var RetrievalIndex = (function () {
 				const ver = item.version || 0;
 				itemVersions[item.key] = ver;
 				const hasOcr = ocrKeys.has(item.key);
+				const hasTables = tableKeys.has(item.key);
 				const prevOcrUsed = (prev && prev.meta && prev.meta.ocrUsedKeys) || [];
+				const prevTableUsed = (prev && prev.meta && prev.meta.tableUsedKeys) || [];
 				const ocrNew = hasOcr && prevOcrUsed.indexOf(item.key) === -1;
+				const tablesNew = buildTableChunks && hasTables && prevTableUsed.indexOf(item.key) === -1;
 				const prevVer = prev && prev.versions ? prev.versions[item.key] : undefined;
-				if (prev && canReuse && !ocrNew && (prevVer === undefined ? false : prevVer === ver) && prev.byItem.has(item.key)) {
+				if (prev && canReuse && !ocrNew && !tablesNew && (prevVer === undefined ? false : prevVer === ver) && prev.byItem.has(item.key)) {
 					for (const idx of prev.byItem.get(item.key)) {
 						const oc = prev.chunks[idx];
 						chunks.push({
@@ -594,12 +658,49 @@ var RetrievalIndex = (function () {
 				}
 				if (doEmbed && cs.length) {
 					try {
-						const embs = await embedSafe(cs.map(embedInputOf));
+						// v0.1.46 修复：cs 块只有 page/text，没有 title——必须显式带上论文标题，
+						// 否则重建出的向量是「纯正文」而非「标题+正文」，实测篇级 H@1 会掉 6–7pp。
+						const embs = await embedSafe(cs.map((x) => embedInputOf({ title: title, text: x.text })));
 						for (const e of embs) {
 							if (e && e.length) { dimOutProbe = e.length; vecs.push(e); }
 							else { vecs.push(new Array(dimOutProbe || 1024).fill(0)); embedErrors++; }
 						}
 					} catch (e) { embedErrors++; log('向量化失败：' + e); }
+				}
+				// v0.1.41/42：表格块并入索引（默认关闭；开启后实测会稀释篇级排序，仅供实验）
+				if (hasTables && buildTableChunks) {
+					const traw = await readAbs(tablesDir + '\\' + item.key + '.json');
+					if (traw) {
+						try {
+							const tj = JSON.parse(traw);
+							const tbl = [];
+							for (const t of (tj.tables || [])) {
+								if (isJunkTable(t)) continue;
+								const md = String(t.markdown || '');
+								if (md.length < 20) continue;
+								const cap = String(t.caption || '').trim();
+								const head = '【表' + (t.page != null ? '·p' + t.page : '') + (cap ? '｜' + cap : '') + '】\n';
+								tbl.push({ page: Number(t.page) || 0, text: head + md });
+							}
+							for (const t of tbl) {
+								chunks.push({
+									cid: item.key + '#tbl#' + chunks.length, itemKey: item.key, itemID: id,
+									parentKey, libraryID: rec.libraryID, title, retracted, orphan: isOrphan,
+									page: t.page, pageSource: 'pdf', role: 'table', ocr: false, text: t.text
+								});
+							}
+							if (doEmbed && tbl.length) {
+								try {
+									const tembs = await embedSafe(tbl.map((t) => embedInputOf({ title: title, text: t.text })));
+									for (const e of tembs) {
+										if (e && e.length) { dimOutProbe = e.length; vecs.push(e); }
+										else { vecs.push(new Array(dimOutProbe || 1024).fill(0)); embedErrors++; }
+									}
+								} catch (e) { embedErrors++; log('表格向量化失败：' + e); }
+							}
+							if (tbl.length) { tableUsed++; tableUsedKeys.push(item.key); tableChunks += tbl.length; }
+						} catch (e) { log('表格旁路解析失败 ' + item.key + '：' + e); }
+					}
 				}
 				done++;
 				buildState.processed = done;
@@ -674,17 +775,31 @@ var RetrievalIndex = (function () {
 			}
 
 			// 从最终 chunks 重新统计（增量构建时单次计数会失真）
-			let statOrphan = 0, statOcrChunks = 0, statRetracted = 0, statCache = 0;
+			let statOrphan = 0, statOcrChunks = 0, statRetracted = 0, statCache = 0, statTableChunks = 0;
 			const statParents = new Set(), statPapers = new Set();
 			for (const c of chunks) {
 				if (c.orphan) statOrphan++;
 				if (c.ocr || c.pageSource === 'ocr') statOcrChunks++;
+				if (c.role === 'table') statTableChunks++;
 				if (c.retracted) statRetracted = 1;
 				if (c.pageSource === 'cache') statCache++;
 				statParents.add(c.parentKey || c.itemKey);
 				statPapers.add(c.itemKey);
 			}
 			ocrUsed = statOcrChunks > 0 ? Math.max(ocrUsed, new Set(chunks.filter(c => c.ocr || c.pageSource === 'ocr').map(c => c.itemKey)).size) : 0;
+			// 表格与 OCR 同理：用最终 chunks 重建计数与 key 清单（增量构建时单次计数会失真）
+			if (statTableChunks > 0) {
+				const tset = new Set();
+				for (const c of chunks) {
+					if (c.role === 'table' && tset.size < 5000) tset.add(c.itemKey);
+				}
+				tableUsed = tset.size;
+				tableUsedKeys.length = 0;
+				for (const k of tset) tableUsedKeys.push(k);
+			} else {
+				tableUsed = 0;
+				tableUsedKeys.length = 0;
+			}
 			cacheRecovered = Math.max(cacheRecovered, statCache > 0 ? new Set(chunks.filter(c => c.pageSource === 'cache').map(c => c.itemKey)).size : 0);
 			retractedCount = statRetracted;
 			await saveIndex(chunks, vecData, dimOut, {
@@ -695,6 +810,7 @@ var RetrievalIndex = (function () {
 				ollamaOnline: doEmbed, embedErrors, embedDim: dimOutProbe,
 				cacheRecovered, retractedPapers: retractedCount, reused, itemVersions,
 				ocrUsed, ocrUsedKeys, failedItems, pageGaps,
+				tableUsed, tableUsedKeys, tableChunks: statTableChunks,
 				sourceAttachments: used, failed, truncated, elapsedMs: Date.now() - t0
 			});
 			cached = null; bm25 = null; parentKeyCache.clear();
@@ -953,6 +1069,34 @@ var RetrievalIndex = (function () {
 		}
 		if (skippedRetracted) log('已过滤撤稿文献 ' + skippedRetracted + ' 条（includeRetracted=1 可查看）');
 
+		// v0.1.42：表格补充段——不参与排序，只在已召回论文后追加其表格（列表/指标类答案常在表里）
+		let tableSupplements = 0;
+		if (tuneNum('tableSupplement') > 0 && out.length) {
+			const maxSup = Math.max(0, Math.min(5, Math.round(tuneNum('tableSupplementMax'))));
+			const seenPaper = new Set();
+			for (const r of out.slice()) {
+				if (tableSupplements >= maxSup) break;
+				const pk2 = r.parentKey || r.itemKey;
+				if (seenPaper.has(pk2)) continue;
+				seenPaper.add(pk2);
+				const tbl = await readTableSidecar(r.itemKey);
+				if (!tbl || !Array.isArray(tbl.tables) || !tbl.tables.length) continue;
+				const t = tbl.tables.find((x) => !isJunkTable(x));
+				if (!t) continue;
+				const md = String(t.markdown || '');
+				if (md.length < 20) continue;
+				const head = '【表' + (t.page ? '·p' + t.page : '') + (t.caption ? '｜' + String(t.caption).slice(0, 60) : '') + '】\n';
+				const body = (head + md).slice(0, full ? 3000 : 1200);
+				out.push({
+					itemKey: r.itemKey, parentKey: r.parentKey, title: r.title,
+					page: t.page ? Number(t.page) : null, pageSource: 'pdf', role: 'table',
+					retracted: r.retracted, supplement: true,
+					text: (head + md).length > (full ? 3000 : 1200) ? body + '…' : body
+				});
+				tableSupplements++;
+			}
+		}
+
 		// 证据来源事实（不做“够不够”的判定——实测词面/余弦/本地小模型都不可靠，
 		// 只给出可核验的来源信息，由调用方自行决定是否标注局限）
 		const paperSet = new Set();
@@ -973,8 +1117,12 @@ var RetrievalIndex = (function () {
 			retractedFiltered: skippedRetracted,
 			orphansIncluded: useOrphans,
 			orphansFiltered: skippedOrphans,
+			tableSupplements: tableSupplements,
 			hints: []
 		};
+		if (tableSupplements > 0) {
+			evidence.hints.push('末尾 ' + tableSupplements + ' 条为表格补充段（不参与排序，来自已召回论文的表格，用于补全列表/指标类内容）');
+		}
 		if (out.length && evidence.segmentsWithPage < out.length) {
 			evidence.hints.push('部分片段无页码（来自 Zotero 全文缓存，原文 PDF 缺失）');
 		}
@@ -1011,7 +1159,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.40',
+					ok: true, plugin: 'retrieval-index', version: '0.1.46',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}

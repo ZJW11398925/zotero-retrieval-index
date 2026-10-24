@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.38 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
+#       v0.1.46 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -209,6 +209,21 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 
 `python tools/smoke_test.py --freeze` 会把当前 `/retrieval/admin/tune` 的 effective 参数写入 `smoke_expected.json`；
 常规冒烟会自动按该参数固定配置、结束后恢复。因此调参（如 rerankN）不会让冒烟误报漂移；重排服务不可用时插件自动回落，冒烟会如实反映配置差异。
+
+## 表格补充段（v0.1.42+）
+
+列表/指标类答案常在表格里，而正文文本按列乱序。做法：**表格不进索引排序**，只在检索结果末尾补附表内容。
+
+```bash
+# 1) 从 Zotero PDF 抽取表格（生成 retrieval-index/tables/<key>.json + _manifest.json）
+python tools/extract_tables.py --all --workers 4
+# 全量实测：454 篇 / 2,748 张表 / 0 失败（3.7 MB sidecar）
+```
+
+- 检索返回的 `results` 末尾可能带 `supplement: true, role: 'table'` 的条目（默认最多 2 条，来自已召回论文的表格）；
+- `evidence.tableSupplements` 给出条数，`hints` 会提示"末尾为表格补充段"；
+- 参数：`tableSupplement`(0/1)、`tableSupplementMax`(0–5)，`/retrieval/admin/tune` 可调；
+- 反例记录：把表格并入索引会稀释篇级排序（R@5 92→89.33），故默认 `tableChunksBuild=0`（实验开关）。
 
 ## 维护接口：重复附件清理（v0.1.24+）
 
