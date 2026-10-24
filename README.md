@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.24 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
+#       v0.1.25 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -326,7 +326,7 @@ manifest.json  bootstrap.js  prefs.js  content/  chrome/
 - **库内重复条目**（同一文献在多个库/多个条目）检索时已去重（父条目 + 同标题 cap2 + 跨库正文签名去重），但 Zotero 库本身仍是脏数据，未做合并
 - OCR 为**旁路**方案（Windows 内置 OCR，保留真实页码）：中文效果良好；**韩/日文需装语言包**，未装时用 bigram/常用字质量闸拦截（见 OCR 章节）
 - OCR 已覆盖 **中/韩/日/英** 四语（67 篇 / 9,912 页，含历史批次）；剩余 20 篇无法 OCR（storage 缺 PDF）；韩/日/英需对应 OCR 语言包（本机已装 zh-CN / ko-KR / ja-JP / en-US）
-- **已知 bug（待 v0.1.25 修）**：	itlePoor() 的两轮循环使 **60/835 篇低信息标题文献（4,023 块，含 AIC2016–2023 翻译 8 篇）在任何查询下都不会被返回**；实测插件真实接口 R@5 仅 82.67%（官方模拟 90.67%），详见 docs/t7-reranker-validation.md
+- **已修复（v0.1.25）**：`titlePoor()` 的两轮循环曾使 **60/835 篇低信息标题文献（4,023 块，含 AIC2016–2023 翻译 8 篇）在任何查询下都不返回**（插件真实 R@5 82.67%）；v0.1.25 改为单轮输出后实测 **R@5 88.00%（+5.33pp）**、Hit@1 73.33%（+2.67pp），AIC2017 等恢复 rank 1，详见 `docs/t7-reranker-validation.md`
 - 部分 PDF 文本层本身是 OCR 结果，质量参差
 
 > 已实现（v0.1.19+）：**增量更新**——启动 90 秒后自动跑增量，无变更约 3 秒短路；手动 `GET /retrieval/build?incremental=1`。
