@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 83.6 MB，含 490 篇表格 sidecar；快照 2026-10-25；sha256 f1ac05f8…）
+#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 83.6 MB，含 490 篇表格 sidecar；快照 2026-10-25；sha256 d45a14fa…）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -193,6 +193,12 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 工具在 `opt_eval/t14/`：`build_passage_gold.py`（重建后可重映射）、`passage_eval.py`（段落级 harness）、
 `phase_c_metrics.py`（参数 A/B）、`paper_quick.py`、`cross_table.py`，报告 `T14_REPORT.md`。
 参数结论：**rrfK=30**、**abstractPrior=0**（摘要页先验实测为负收益）、**capPerPaper=2**；k 建议见协议文档（默认 k=8）。
+
+## 团队实时更新索引（v0.1.51）
+
+方案 A（推荐）：中心机跑检索服务 + 内网反向代理 `http://192.0.2.10:23120`，队友零安装、agent 改 URL 即用；中心机自动增量 90s/30min，索引随群组同步自动更新。
+方案 B：队友本地开 `autoIncremental`（需 Ollama + 本地 PDF），各自索引随库更新；方案 C：月度快照兜底。
+见 `docs/团队实时更新.md`（包内《可选-团队实时更新.md》）。代理 `tools/retrieval_proxy.py` 已开机自启（RetrievalProxy.lnk）+ watchdog（每 5 分钟）+ 防火墙仅放行 192.0.2.0/24。
 
 ## 文献库增长后的索引更新（v0.1.50，2026-10-25）
 

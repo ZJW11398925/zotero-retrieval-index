@@ -32,7 +32,11 @@ var RetrievalIndex = (function () {
 		rerankN: { min: 1, max: 50, def: 10 },    // 重排候选数（A/B：N=10 首段更好且延迟更低）
 		rerankW: { min: 0, max: 1, def: 0.6 },    // 重排分权重（与原始名次 RRF 融合）
 		tableSupplement: { min: 0, max: 1, def: 1 },   // 表格补充段（不参与排序，仅补已召回论文的表内容）
-		tableSupplementMax: { min: 0, max: 5, def: 2 } // 每次最多追加几条表格补充段
+		tableSupplementMax: { min: 0, max: 5, def: 2 }, // 每次最多追加几条表格补充段
+		// v0.1.51：自动增量可在线调（团队"实时索引"用；写入 pref，下次启动生效）
+		autoIncremental: { min: 0, max: 1, def: 1 },
+		autoIncrementalDelaySec: { min: 10, max: 3600, def: 90 },
+		autoIncrementalMinutes: { min: 0, max: 1440, def: 0 }
 	};
 	const tuneNum = (key) => {
 		const spec = TUNE_SPEC[key] || { min: 0, max: 1e9, def: 0 };
@@ -1173,7 +1177,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.50',
+					ok: true, plugin: 'retrieval-index', version: '0.1.51',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
