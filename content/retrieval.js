@@ -21,7 +21,12 @@ var RetrievalIndex = (function () {
 		aggW2: { min: 0, max: 2, def: 0 },
 		rrfK: { min: 1, max: 500, def: 30 },      // RRF 平滑常数（T14 段落级验证：30 优于 60，篇级不掉）
 		wBm25: { min: 0, max: 5, def: 1 },        // BM25 路权重
-		wDense: { min: 0, max: 5, def: 1 }        // 向量路权重
+		wDense: { min: 0, max: 5, def: 1 },       // 向量路权重
+		// T14 Phase C 实测（插件真实接口，段落级金标）：摘要页先验是负收益——
+		// 开：P@1 41.5% / P@5 61.0%；关：P@1 53.7% / P@5 73.2%（篇级指标不变）。
+		// 结论：默认关闭；保留开关便于个别场景回滚验证。
+		abstractPrior: { min: 0, max: 1, def: 0 },
+		capPerPaper: { min: 1, max: 5, def: 2 }   // 同一文献最多返回几段（cap=2 段落级最优）
 	};
 	const tuneNum = (key) => {
 		const spec = TUNE_SPEC[key] || { min: 0, max: 1e9, def: 0 };
@@ -757,6 +762,9 @@ var RetrievalIndex = (function () {
 		if (!idx || !idx.chunks.length) throw new Error('尚未建立索引');
 		const bm = getBm25();
 		const kk = Math.max(1, Math.min(50, parseInt(k, 10) || 8));
+		// v0.1.33：两个段落选择参数（可调）
+		const capPerPaper = Math.max(1, Math.round(tuneNum('capPerPaper')));
+		const abstractPriorOn = tuneNum('abstractPrior') > 0;
 		let useOrphans = true;
 		try {
 			const v = Zotero.Prefs.get(PREF('includeOrphans'), true);
@@ -857,7 +865,7 @@ var RetrievalIndex = (function () {
 			if (titlePoor(c.title)) poorTitleSeen++;
 			const tk = titleKeyOf(ctitle) || pk;   // 同标题不同条目也视为同一文献
 			const n = perPaper.get(tk) || 0;
-			if (n >= 2) continue;
+			if (n >= capPerPaper) continue;
 			// 摘要页先验：该文献首次出现时，若其首页块也在候选池前段，则用首页块作代表段
 			// （实测案例：Barrett 2015 的综述段排第 1、摘要段仅排 18，导致 agent 拿综述段外推）
 			// 摘要页先验（严格模式，只作用于首条结果）：
@@ -865,7 +873,7 @@ var RetrievalIndex = (function () {
 			// 只在**确实识别到摘要标记**时才替换——不做“退回任意首页块”的激进兜底
 			// （实测中文文献首页块常无摘要标记，强行替换会把首条换成从句子中间开始的片段）。
 			let emit = c;
-			if (out.length === 0 && n === 0 && idx.frontMap && idx.frontMap.has(tk)) {
+			if (abstractPriorOn && out.length === 0 && n === 0 && idx.frontMap && idx.frontMap.has(tk)) {
 				const ABS = /摘\s*要|abstract/i;
 				let pick = -1, bestAt = 1e9;
 				for (const fi of idx.frontMap.get(tk)) {
@@ -955,7 +963,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.32',
+					ok: true, plugin: 'retrieval-index', version: '0.1.35',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}

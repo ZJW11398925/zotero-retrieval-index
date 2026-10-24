@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.32 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
+#       v0.1.35 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -168,23 +168,26 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 | `aggW2` | 篇级聚合第二块权重 | 0–2 | **0**（线上实测最优；离线结论 0.4 在 Firefox-ICU 下反而拖累 R@5）|
 | `rrfK` | RRF 平滑常数 | 1–500 | **30**（T14 段落级验证：30 优于 60，篇级不掉）|
 | `wBm25` / `wDense` | 两路权重 | 0–5 | 1 / 1 |
+| `abstractPrior` | 摘要页先验（首条替换为含摘要标记的首页块） | 0–1 | **0**（T14 段落级实测：开=负收益，P@1 41.5% → 关=53.7%）|
+| `capPerPaper` | 同一文献最多返回几段 | 1–5 | 2（cap=2 段落级最优）|
 
 自动部署脚本：`tools/deploy_xpi.ps1 <xpi路径>`（关 Zotero → 备份旧 xpi → 替换 → 重启 → 等插件响应），改代码后一条命令上线。
 
 ## 段落级评估（v0.1.32+）
 
-篇级 R@5 会掩盖"论文对了、段落错了"。本仓库的 gold 自带 `gt_cid`（查询来源段落），
+篇级 R@5 会掩盖"论文对了、段落错了"。repo 的 gold 自带 `gt_cid`（查询来源段落），
 `D:\workspace\eval\chunks.jsonl` 存有原文 → **47/75 条可免费映射成段落级金标**（high 41 / wide 47）。
 
-| 指标（v0.1.32，插件真实接口） | high（n=41） | wide（n=47） |
+| 指标（v0.1.35，插件真实接口） | high（n=41） | wide（n=47） |
 |---|---|---|
-| 段落 P@1（首条含来源段） | 41.5% | 38.3% |
-| 段落 P@5 | 61.0% | 57.5% |
+| 段落 P@1（首条含来源段） | **53.7%** | 51.1% |
+| 段落 P@5 / P@20 | 73.2% / 80.5% | 70.2% / 76.6% |
 | 篇级 top-5 | 95.1% | 95.7% |
-| **篇✓段✗（论文对、段落错）** | **34.1%** | **38.3%** |
+| **篇✓段✗（论文对、段落错）** | **21.9%** | **25.5%** |
 
 工具在 `opt_eval/t14/`：`build_passage_gold.py`（重建后可重映射）、`passage_eval.py`（段落级 harness）、
-`paper_quick.py`、`cross_table.py`，报告 `T14_REPORT.md`。参数扫描结论：**rrfK=30** 段落级全面优于 60 → 已设为默认。
+`phase_c_metrics.py`（参数 A/B）、`paper_quick.py`、`cross_table.py`，报告 `T14_REPORT.md`。
+参数结论：**rrfK=30**、**abstractPrior=0**（摘要页先验实测为负收益）、**capPerPaper=2**；k 建议见协议文档（默认 k=8）。
 
 ## 维护接口：重复附件清理（v0.1.24+）
 
