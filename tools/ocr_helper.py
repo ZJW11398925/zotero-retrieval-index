@@ -405,6 +405,13 @@ def main():
                 json.dump({'pages': pages, 'ocrPages': ocr_pages}, f, ensure_ascii=False)
             if key not in keys:
                 keys.append(key)
+            # 每篇写完立刻更新 manifest：进程/会话中断也不会出现「有旁路但没登记」的孤儿文件
+            try:
+                with open(manifest_path, 'w', encoding='utf-8') as _mf:
+                    json.dump({'keys': keys, 'generatedAt': time.strftime('%Y-%m-%dT%H:%M:%S')},
+                              _mf, ensure_ascii=False)
+            except Exception:
+                pass
             pages_done += len(pages)
             ok += 1
             print('  [%d/%d] %s %s：%d 页，OCR %d 页，%ds → %s' % (
