@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.36 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
+#       v0.1.38 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -171,7 +171,7 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 | `abstractPrior` | 摘要页先验（首条替换为含摘要标记的首页块） | 0–1 | **0**（T14 段落级实测：开=负收益，P@1 41.5% → 关=53.7%）|
 | `capPerPaper` | 同一文献最多返回几段 | 1–5 | 2（cap=2 段落级最优）|
 | `rerank` | 启用 GPU 重排（需本地服务） | 0–1 | 0（本机已手动开为 1）|
-| `rerankN` / `rerankW` | 重排候选数 / 重排权重 | 1–50 / 0–1 | 20 / 0.6 |
+| `rerankN` / `rerankW` | 重排候选数 / 重排权重 | 1–50 / 0–1 | **10** / 0.6 |
 
 自动部署脚本：`tools/deploy_xpi.ps1 <xpi路径>`（关 Zotero → 备份旧 xpi → 替换 → 重启 → 等插件响应），改代码后一条命令上线。
 
@@ -201,9 +201,14 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 | 模型 | `bge-reranker-base`（PyTorch fp16，约 1.1GB，放 `D:\workspace\opt_eval\t14\rr_model`，**不随团队包分发**）|
 | 服务 | `python tools/rerank_service.py`（127.0.0.1:8898）或 `powershell -File tools/start_rerank_service.ps1` |
 | 插件开关 | `curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=rerank&value=1&confirm=TUNE"`（关：`reset=1`）|
-| 兼容性 | 服务不可用时自动跳过并回落，不影响检索；默认关闭 |
+| 兼容性 | 服务不可用时自动跳过并回落（1.2s 超时 + 60s 内不再尝试），不影响检索；默认关闭 |
 | 开销 | GPU 打分 34–66ms（N=10/20），实测端到端 **+69ms/查询**（k=8）|
-| 线上实测 | 篇级 H@1 81.33→82.67%、MRR 0.8529→0.8596；段落 P@1(high) +4.8pp、(wide) +4.2pp |
+| 线上实测 | 篇级 H@1 81.33→82.67%、MRR 0.8529→0.8596；段落 P@1(high) 58.5→61.0%（N=10）、wide +4.2pp；**判定口径首条充分率约 72.8%** |
+
+## 冒烟基准的参数固定（v0.1.38+）
+
+`python tools/smoke_test.py --freeze` 会把当前 `/retrieval/admin/tune` 的 effective 参数写入 `smoke_expected.json`；
+常规冒烟会自动按该参数固定配置、结束后恢复。因此调参（如 rerankN）不会让冒烟误报漂移；重排服务不可用时插件自动回落，冒烟会如实反映配置差异。
 
 ## 维护接口：重复附件清理（v0.1.24+）
 

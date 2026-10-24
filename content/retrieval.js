@@ -29,7 +29,7 @@ var RetrievalIndex = (function () {
 		capPerPaper: { min: 1, max: 5, def: 2 },  // 同一文献最多返回几段（cap=2 段落级最优）
 		// v0.1.36：可选重排（本地 GPU 服务）。离线验证：N=20,w=0.6 → 段落 P@1 +9.7pp / P@5 +7.3pp，篇级不降。
 		rerank: { min: 0, max: 1, def: 0 },       // 1=启用（需本地服务运行）
-		rerankN: { min: 1, max: 50, def: 20 },    // 重排候选数
+		rerankN: { min: 1, max: 50, def: 10 },    // 重排候选数（A/B：N=10 首段更好且延迟更低）
 		rerankW: { min: 0, max: 1, def: 0.6 }     // 重排分权重（与原始名次 RRF 融合）
 	};
 	const tuneNum = (key) => {
@@ -52,6 +52,8 @@ var RetrievalIndex = (function () {
 	let progressWin = null;
 	let startupError = null;
 	let buildState = { running: false, phase: 'idle', processed: 0, total: 0, chunks: 0, failed: 0, startedAt: null, error: null };
+	// v0.1.38：重排服务失败后 60s 内不再尝试（避免服务挂掉时每条查询都等超时）
+	let rerankDownUntil = 0;
 
 	function log(msg) { try { Zotero.debug('[retrieval] ' + msg); } catch (e) {} }
 
@@ -850,14 +852,14 @@ var RetrievalIndex = (function () {
 		// v0.1.36：可选重排（本地 GPU 服务，默认关闭；需 python tools/rerank_service.py 常驻）。
 		// 离线验证（75 条金标，段落级）：N=20、w=0.6 → 段落 P@1 53.7%→63.4%、P@5 73.2%→80.5%，
 		// 篇级 R@5 不变、H@1 +1.33pp、MRR +0.0147；GPU 延迟约 66ms/查询。
-		if (tuneNum('rerank') > 0 && ranked.length > 1) {
+		if (tuneNum('rerank') > 0 && ranked.length > 1 && Date.now() >= rerankDownUntil) {
 			try {
 				const RN = Math.max(1, Math.min(50, Math.round(tuneNum('rerankN'))));
 				const RW = Math.max(0, Math.min(1, tuneNum('rerankW')));
 				const head = ranked.slice(0, RN);
 				const passages = head.map((p) => String((idx.chunks[p[0]] && idx.chunks[p[0]].text) || ''));
 				const svc = String(getPref('rerankURL', 'http://127.0.0.1:8898')).replace(/\/+$/, '');
-				const ts = timeoutSignal(4000);
+				const ts = timeoutSignal(1200);
 				let scores = null;
 				try {
 					const res = await fetch(svc + '/rerank', {
@@ -880,8 +882,13 @@ var RetrievalIndex = (function () {
 					const comb = head.map((p, i) => (RW / (K0 + rr[i])) + ((1 - RW) / (K0 + i + 1)));
 					const order = head.map((p, i) => i).sort((a, b) => comb[b] - comb[a]);
 					ranked = order.map((i) => head[i]).concat(ranked.slice(RN));
+				} else {
+					rerankDownUntil = Date.now() + 60000;
 				}
-			} catch (e) { log('重排服务不可用，已跳过：' + e); }
+			} catch (e) {
+				rerankDownUntil = Date.now() + 60000;
+				log('重排服务不可用，60s 内跳过：' + e);
+			}
 		}
 
 		const out = [];
@@ -1004,7 +1011,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.36',
+					ok: true, plugin: 'retrieval-index', version: '0.1.38',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
