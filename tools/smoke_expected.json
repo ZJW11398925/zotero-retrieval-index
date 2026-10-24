@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "generated_by": "tools/smoke_test.py --freeze",
-  "frozen_at": "2026-10-24T17:19:43+08:00",
+  "frozen_at": "2026-10-24T17:27:24+08:00",
   "base_url": "http://127.0.0.1:23119",
   "plugin": "retrieval-index",
-  "plugin_version": "0.1.32",
+  "plugin_version": "0.1.35",
   "k": 5,
   "mode": "hybrid",
   "stats": {
@@ -165,7 +165,7 @@
         "itemKey": "AYZJLH4P",
         "parentKey": "AYZJLH4P",
         "title": "AIC2017翻译",
-        "page": 1,
+        "page": 71,
         "pageSource": "pdf"
       },
       "top5": [
@@ -173,7 +173,7 @@
           "itemKey": "AYZJLH4P",
           "parentKey": "AYZJLH4P",
           "title": "AIC2017翻译",
-          "page": 1,
+          "page": 71,
           "pageSource": "pdf"
         },
         {
@@ -213,7 +213,7 @@
         "itemKey": "SQHR9BC2",
         "parentKey": "NTBU4DVD",
         "title": "基于儿童心理学的幼儿园建筑色彩设计研究",
-        "page": 1,
+        "page": 2,
         "pageSource": "pdf"
       },
       "top5": [
@@ -221,7 +221,7 @@
           "itemKey": "SQHR9BC2",
           "parentKey": "NTBU4DVD",
           "title": "基于儿童心理学的幼儿园建筑色彩设计研究",
-          "page": 1,
+          "page": 2,
           "pageSource": "pdf"
         },
         {
