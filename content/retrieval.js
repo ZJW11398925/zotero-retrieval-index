@@ -1094,13 +1094,18 @@ var RetrievalIndex = (function () {
 				const sigT = hT.toString(36) + '|' + sigTxt.length;
 				if (seenTable.has(sigT)) continue;
 				seenTable.add(sigT);
-				const head = '【表' + (t.page ? '·p' + t.page : '') + (t.caption ? '｜' + String(t.caption).slice(0, 60) : '') + '】\n';
-				const body = (head + md).slice(0, full ? 3000 : 1200);
+				// v0.1.48：合并后的表用页范围（p19–20），表格补充段上限放宽到 2200 字符
+				const pgTxt = (Array.isArray(t.pages) && t.pages.length === 2)
+					? ('p' + t.pages[0] + '–' + t.pages[1])
+					: (t.page ? 'p' + t.page : '');
+				const head = '【表' + (pgTxt ? '·' + pgTxt : '') + (t.caption ? '｜' + String(t.caption).slice(0, 60) : '') + '】\n';
+				const capLen = full ? 3000 : 2200;
+				const body = (head + md).slice(0, capLen);
 				out.push({
 					itemKey: r.itemKey, parentKey: r.parentKey, title: r.title,
 					page: t.page ? Number(t.page) : null, pageSource: 'pdf', role: 'table',
 					retracted: r.retracted, supplement: true,
-					text: (head + md).length > (full ? 3000 : 1200) ? body + '…' : body
+					text: (head + md).length > capLen ? body + '…' : body
 				});
 				tableSupplements++;
 			}
@@ -1168,7 +1173,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.47',
+					ok: true, plugin: 'retrieval-index', version: '0.1.48',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
