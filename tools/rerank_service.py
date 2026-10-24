@@ -39,17 +39,22 @@ def load_model(max_len=512):
     print('[rerank] loaded %s on %s in %.1fs (max_len=%d)' % (MODEL, device, time.time() - t0, max_len), flush=True)
 
 
-def score(q, passages):
+def score(q, passages, batch=16):
+    """分批打分（大批次会撑爆 8GB 显存/显存碎片）"""
     import torch
     load_model(_state['max_len'])
     tok, model = _state['tok'], _state['model']
-    enc = tok([q] * len(passages), passages, padding=True, truncation=True,
-              max_length=_state['max_len'], return_tensors='pt')
     device = _state['device']
-    enc = {k: v.to(device) for k, v in enc.items()}
-    with torch.inference_mode():
-        logits = model(**enc).logits.view(-1).float()
-    return logits.cpu().tolist()
+    out = []
+    for i in range(0, len(passages), batch):
+        chunk = passages[i:i + batch]
+        enc = tok([q] * len(chunk), chunk, padding=True, truncation=True,
+                  max_length=_state['max_len'], return_tensors='pt')
+        enc = {k: v.to(device) for k, v in enc.items()}
+        with torch.inference_mode():
+            logits = model(**enc).logits.view(-1).float()
+        out.extend(logits.cpu().tolist())
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,8 +99,10 @@ def main():
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=8898)
     ap.add_argument('--max-len', type=int, default=512)
+    ap.add_argument('--batch', type=int, default=16)
     args = ap.parse_args()
     _state['max_len'] = args.max_len
+    _state['batch'] = args.batch
     load_model(args.max_len)  # 启动即加载，避免首个请求慢
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print('[rerank] listening on http://%s:%d' % (args.host, args.port), flush=True)

@@ -1,10 +1,21 @@
 {
   "schema": 1,
   "generated_by": "tools/smoke_test.py --freeze",
-  "frozen_at": "2026-10-24T17:48:14+08:00",
+  "frozen_at": "2026-10-24T18:04:54+08:00",
   "base_url": "http://127.0.0.1:23119",
+  "tune": {
+    "aggW2": 0,
+    "rrfK": 30,
+    "wBm25": 1,
+    "wDense": 1,
+    "abstractPrior": 0,
+    "capPerPaper": 2,
+    "rerank": 1,
+    "rerankN": 10,
+    "rerankW": 0.6
+  },
   "plugin": "retrieval-index",
-  "plugin_version": "0.1.36",
+  "plugin_version": "0.1.37",
   "k": 5,
   "mode": "hybrid",
   "stats": {
@@ -81,13 +92,6 @@
           "pageSource": "cache"
         },
         {
-          "itemKey": "6NUQYGF3",
-          "parentKey": "6NUQYGF3",
-          "title": "儿童友好城市的色彩环境规划设计研究",
-          "page": 4,
-          "pageSource": "pdf"
-        },
-        {
           "itemKey": "B6FGD7PJ",
           "parentKey": "B6FGD7PJ",
           "title": "200000505267_20230710232410-1-92 zh",
@@ -102,10 +106,17 @@
           "pageSource": "pdf"
         },
         {
+          "itemKey": "6NUQYGF3",
+          "parentKey": "6NUQYGF3",
+          "title": "儿童友好城市的色彩环境规划设计研究",
+          "page": 4,
+          "pageSource": "pdf"
+        },
+        {
           "itemKey": "GPIC2G8V",
           "parentKey": "GPIC2G8V",
           "title": "颜色偏好对青春期儿童家具选择的影响【搜狗文档翻译_译文_英译中】",
-          "page": 7,
+          "page": 2,
           "pageSource": "pdf"
         }
       ]
@@ -143,18 +154,18 @@
           "pageSource": "pdf"
         },
         {
-          "itemKey": "HBVDZ6UJ",
-          "parentKey": "UGH2D4VZ",
-          "title": "儿童友好城市背景下小学护学空间色彩选择研究",
-          "page": 2,
-          "pageSource": "pdf"
-        },
-        {
           "itemKey": "X2WA8QVT",
           "parentKey": "X2WA8QVT",
           "title": "基于儿童对幼儿园室内空间色彩选择的偏好",
           "page": null,
           "pageSource": "cache"
+        },
+        {
+          "itemKey": "HBVDZ6UJ",
+          "parentKey": "UGH2D4VZ",
+          "title": "儿童友好城市背景下小学护学空间色彩选择研究",
+          "page": 1,
+          "pageSource": "pdf"
         }
       ]
     },
@@ -194,14 +205,14 @@
           "itemKey": "PB9S5V9Q",
           "parentKey": "PB9S5V9Q",
           "title": "AIC2023翻译",
-          "page": 45,
+          "page": 37,
           "pageSource": "pdf"
         },
         {
           "itemKey": "VGQ2IYBU",
           "parentKey": "VGQ2IYBU",
           "title": "55908383 zh",
-          "page": 7,
+          "page": 1,
           "pageSource": "pdf"
         }
       ]
@@ -235,14 +246,14 @@
           "itemKey": "K66NETRF",
           "parentKey": "K66NETRF",
           "title": "托幼、中小学校建筑设计手册 10941693",
-          "page": 115,
+          "page": 84,
           "pageSource": "ocr"
         },
         {
           "itemKey": "K66NETRF",
           "parentKey": "K66NETRF",
           "title": "托幼、中小学校建筑设计手册 10941693",
-          "page": 84,
+          "page": 79,
           "pageSource": "ocr"
         },
         {

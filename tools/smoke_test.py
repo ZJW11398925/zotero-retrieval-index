@@ -1101,6 +1101,7 @@ class SmokeRunner:
             "generated_by": "tools/smoke_test.py --freeze",
             "frozen_at": _iso_now(),
             "base_url": self.args.base_url,
+            "tune": _admin_tune_get(self.args.base_url),
             "plugin": self.plugin_info.get("plugin"),
             "plugin_version": self.plugin_info.get("version"),
             "k": self.args.k,
@@ -1538,6 +1539,57 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _admin_tune_get(base_url: str) -> dict:
+    """读取 /retrieval/admin/tune 的 effective 值；失败返回 {}（旧版插件无此端点）。"""
+    import json as _json
+    import urllib.request as _urlreq
+    try:
+        req = _urlreq.Request(base_url.rstrip("/") + "/retrieval/admin/tune")
+        opener = _urlreq.build_opener(_urlreq.ProxyHandler({}))
+        with opener.open(req, timeout=5) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        eff = data.get("effective")
+        return eff if isinstance(eff, dict) else {}
+    except Exception:
+        return {}
+
+
+def _admin_tune_apply(base_url: str, tune: dict) -> dict:
+    """按给定参数写入（best-effort），返回原始 effective（用于恢复）。"""
+    import json as _json
+    import urllib.parse as _urlparse
+    import urllib.request as _urlreq
+    original = _admin_tune_get(base_url)
+    for key, value in (tune or {}).items():
+        try:
+            q = _urlparse.urlencode({"key": key, "value": value, "confirm": "TUNE"})
+            req = _urlreq.Request(base_url.rstrip("/") + "/retrieval/admin/tune?" + q)
+            opener = _urlreq.build_opener(_urlreq.ProxyHandler({}))
+            with opener.open(req, timeout=5) as resp:
+                resp.read()
+        except Exception:
+            pass
+    return original
+
+
+def _admin_tune_restore(base_url: str, original: dict) -> None:
+    """恢复参数：对每个 key 若原值存在则写回，否则 reset。"""
+    import urllib.parse as _urlparse
+    import urllib.request as _urlreq
+    for key in (original or {}):
+        try:
+            cur = _admin_tune_get(base_url)
+            if key in cur and abs(float(cur[key]) - float(original[key])) < 1e-9:
+                continue
+            q = _urlparse.urlencode({"key": key, "value": original[key], "confirm": "TUNE"})
+            req = _urlreq.Request(base_url.rstrip("/") + "/retrieval/admin/tune?" + q)
+            opener = _urlreq.build_opener(_urlreq.ProxyHandler({}))
+            with opener.open(req, timeout=5) as resp:
+                resp.read()
+        except Exception:
+            pass
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1565,7 +1617,25 @@ def main(argv=None) -> int:
         )
 
     runner = SmokeRunner(args)
-    report = runner.run()
+    # 冒烟前按黄金基准里记录的 tune 参数固定配置（避免 rerankN 等改动的漂移；
+    # 服务不可用时插件会自动回落，因此这里只做 best-effort，结束后恢复原值）
+    original_tune = {}
+    pinned = False
+    if not args.freeze:
+        try:
+            with open(runner.golden_path, "r", encoding="utf-8") as handle:
+                _golden = json.load(handle)
+            _tune = _golden.get("tune") if isinstance(_golden, dict) else None
+            if isinstance(_tune, dict) and _tune:
+                original_tune = _admin_tune_apply(args.base_url, _tune)
+                pinned = True
+        except Exception:
+            pass
+    try:
+        report = runner.run()
+    finally:
+        if pinned:
+            _admin_tune_restore(args.base_url, original_tune)
     if args.json:
         print_json(report)
     else:
