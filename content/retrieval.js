@@ -757,8 +757,47 @@ var RetrievalIndex = (function () {
 		const ranked = [];
 		for (const [i, base] of scoreMap) ranked.push([i, base]);
 		ranked.sort((a, b) => b[1] - a[1]);
-		const posOf = new Map();
-		for (let r = 0; r < ranked.length && r < 200; r++) posOf.set(ranked[r][0], r);
+		// 篇级聚合（v0.1.26，T11 离线验证）：同一文献前两块 RRF 分数按 s1 + 0.4*s2 排序。
+		// 动机：块级排序里「只有一块勉强命中」的文献会排在「两块互相印证」的文献前面；
+		// 官方 75 条金标：Hit@1 78.67%→84.00%（+5.33pp）、R@5 不变、MRR 0.8446→0.8763，
+		// 4 条查询升到 rank1，2 条变差（原本就在 40 名外，不影响 R@5）。
+		{
+			const W2 = 0.4;
+			const tkCache = new Map();
+			const agg = new Map();
+			const tkOf = (ci) => {
+				let tk = tkCache.get(ci);
+				if (tk !== undefined) return tk;
+				const c = idx.chunks[ci];
+				if (!c) { tk = ''; }
+				else {
+					const isRet = c.retracted !== undefined ? !!c.retracted : isRetractedTitle(c.title);
+					if (isRet && !includeRetracted) tk = '';
+					else if (!useOrphans && c.orphan) tk = '';
+					else tk = titleKeyOf(cleanTitle(c.title)) || resolveParentKey(c);
+				}
+				tkCache.set(ci, tk);
+				return tk;
+			};
+			for (const [ci, base] of ranked) {
+				const tk = tkOf(ci);
+				if (!tk) continue;
+				const a = agg.get(tk);
+				if (!a) agg.set(tk, { s1: base, s2: -1 });
+				else if (base > a.s1) { a.s2 = a.s1; a.s1 = base; }
+				else if (base > a.s2) { a.s2 = base; }
+			}
+			const aggScore = (ci) => {
+				const a = agg.get(tkOf(ci));
+				if (!a) return -1;
+				return a.s1 + (a.s2 > 0 ? W2 * a.s2 : 0);
+			};
+			ranked.sort((x, y) => {
+				const sx = aggScore(x[0]), sy = aggScore(y[0]);
+				if (sy !== sx) return sy - sx;
+				return y[1] - x[1];
+			});
+		}
 
 		const out = [];
 		const perPaper = new Map();          // 按父条目去重（同一文献多个 PDF 副本）
@@ -880,7 +919,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.25',
+					ok: true, plugin: 'retrieval-index', version: '0.1.26',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
