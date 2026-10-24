@@ -1,0 +1,12 @@
+# Normalize line endings and mark binary assets
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.xpi binary
+*.zip binary
+
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
