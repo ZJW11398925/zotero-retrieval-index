@@ -13,6 +13,26 @@ var RetrievalIndex = (function () {
 		} catch (e) { return d; }
 	};
 
+	// v0.1.28：线上可调参数（不改代码/不重装即可 A/B；检索时实时读取 pref）。
+	// 通过 GET /retrieval/admin/tune?key=aggW2&value=0.2&confirm=TUNE 设置。
+	const TUNE_SPEC = {
+		// aggW2：篇级聚合第二块权重。离线（Node ICU）w=0.4 有增益，但线上（Zotero/Firefox ICU）
+		// 实测 w=0 最好（92.00% vs 89.33% R@5），故默认 0；需要时可临时调回。
+		aggW2: { min: 0, max: 2, def: 0 },
+		rrfK: { min: 1, max: 500, def: 60 },      // RRF 平滑常数
+		wBm25: { min: 0, max: 5, def: 1 },        // BM25 路权重
+		wDense: { min: 0, max: 5, def: 1 }        // 向量路权重
+	};
+	const tuneNum = (key) => {
+		const spec = TUNE_SPEC[key] || { min: 0, max: 1e9, def: 0 };
+		const raw = getPref(key, spec.def);
+		// reset 后 pref 为空字符串 → 回落到默认值
+		if (raw === '' || raw === undefined || raw === null) return spec.def;
+		let v = Number(raw);
+		if (!isFinite(v)) v = spec.def;
+		return Math.max(spec.min, Math.min(spec.max, v));
+	};
+
 	let rootURI = '';
 	let dataDir = '';
 	let cached = null;
@@ -757,10 +777,14 @@ var RetrievalIndex = (function () {
 		}
 		// RRF 融合 + 标题命中加权（改善长问句召回）
 		const scoreMap = new Map();
-		const K_RRF = 60;
-		for (const rl of rk) {
+		const K_RRF = tuneNum('rrfK');
+		const rrfWeights = [tuneNum('wBm25'), tuneNum('wDense')];
+		for (let li = 0; li < rk.length; li++) {
+			const rl = rk[li];
+			const w = rrfWeights[Math.min(li, rrfWeights.length - 1)];
+			if (!w) continue;
 			for (let i = 0; i < rl.length; i++) {
-				scoreMap.set(rl[i], (scoreMap.get(rl[i]) || 0) + 1 / (K_RRF + i + 1));
+				scoreMap.set(rl[i], (scoreMap.get(rl[i]) || 0) + w / (K_RRF + i + 1));
 			}
 		}
 		// 注意：曾尝试叠加“标题命中”绝对加分，实测是严重倒退——
@@ -774,7 +798,7 @@ var RetrievalIndex = (function () {
 		// 官方 75 条金标：Hit@1 78.67%→84.00%（+5.33pp）、R@5 不变、MRR 0.8446→0.8763，
 		// 4 条查询升到 rank1，2 条变差（原本就在 40 名外，不影响 R@5）。
 		{
-			const W2 = 0.4;
+			const W2 = tuneNum('aggW2');
 			const tkCache = new Map();
 			const agg = new Map();
 			const tkOf = (ci) => {
@@ -931,7 +955,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.27',
+					ok: true, plugin: 'retrieval-index', version: '0.1.31',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
@@ -1262,11 +1286,56 @@ var RetrievalIndex = (function () {
 				}
 			}
 		};
+		// 线上调参（v0.1.28，受控）：
+		//   GET /retrieval/admin/tune                          → 当前生效值 + 白名单/范围
+		//   GET /retrieval/admin/tune?key=aggW2&value=0.2&confirm=TUNE
+		//   GET /retrieval/admin/tune?key=aggW2&reset=1&confirm=TUNE
+		// 参数每次检索时实时读取 pref，改完立即生效，无需重建索引/重装插件。
+		Zotero.Server.Endpoints['/retrieval/admin/tune'] = function () {};
+		Zotero.Server.Endpoints['/retrieval/admin/tune'].prototype = {
+			supportedMethods: ['GET'],
+			init: function (o) {
+				try {
+					const sp = o.searchParams;
+					const key = (sp.get('key') || '').trim();
+					const effective = {};
+					for (const k of Object.keys(TUNE_SPEC)) effective[k] = tuneNum(k);
+					if (!key) {
+						return [200, 'application/json', JSON.stringify({ ok: true, effective, spec: TUNE_SPEC })];
+					}
+					if (!TUNE_SPEC[key]) {
+						return [400, 'application/json', JSON.stringify({ error: '不允许的参数：' + key, allowed: Object.keys(TUNE_SPEC) })];
+					}
+					if (sp.get('confirm') !== 'TUNE') {
+						return [403, 'application/json', JSON.stringify({ error: '写操作需要 confirm=TUNE' })];
+					}
+					const spec = TUNE_SPEC[key];
+					if (sp.get('reset') === '1') {
+						try { Zotero.Prefs.set(PREF(key), '', true); } catch (e) {}
+						return [200, 'application/json', JSON.stringify({
+							ok: true, key, reset: true, effective: Object.assign({}, effective, { [key]: tuneNum(key) })
+						})];
+					}
+					const val = Number(sp.get('value'));
+					if (!isFinite(val)) return [400, 'application/json', JSON.stringify({ error: 'value 不是数字' })];
+					if (val < spec.min || val > spec.max) {
+						return [400, 'application/json', JSON.stringify({ error: 'value 越界', range: [spec.min, spec.max] })];
+					}
+					// 注意：Zotero.Prefs 对「浮点新 pref」会抛 Error setting preference，故统一存字符串
+					Zotero.Prefs.set(PREF(key), String(val), true);
+					return [200, 'application/json', JSON.stringify({
+						ok: true, key, value: val, effective: Object.assign({}, effective, { [key]: val })
+					})];
+				} catch (e) {
+					return [500, 'application/json', JSON.stringify({ error: String((e && e.message) || e) })];
+				}
+			}
+		};
 		log('接口已注册');
 	}
 
 	function unregisterEndpoints() {
-		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/protocol', '/retrieval/ocr-candidates', '/retrieval/admin/import', '/retrieval/admin/organize', '/retrieval/admin/dedup']) {
+		for (const p of ['/retrieval/ping', '/retrieval/stats', '/retrieval/search', '/retrieval/build', '/retrieval/ollama', '/retrieval/protocol', '/retrieval/ocr-candidates', '/retrieval/admin/import', '/retrieval/admin/organize', '/retrieval/admin/dedup', '/retrieval/admin/tune']) {
 			try { delete Zotero.Server.Endpoints[p]; } catch (e) {}
 		}
 	}
