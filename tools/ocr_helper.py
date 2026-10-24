@@ -126,10 +126,10 @@ def make_ps_script():
     return path
 
 
-def ocr_image(ps_script, png_path):
+def ocr_image(ps_script, png_path, lang='zh-CN'):
     r = subprocess.run(
         ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps_script,
-         '-ImagePath', png_path],
+         '-ImagePath', png_path, '-Lang', lang],
         capture_output=True, timeout=180)
     if r.returncode != 0:
         raise RuntimeError('OCR failed: ' + r.stderr.decode('utf-8', 'replace')[:200])
@@ -188,7 +188,7 @@ def scan_storage(dpi_hint=''):
     return no_text, partial
 
 
-def ocr_pdf(pdf_path, ps_script, only_pages=None, fallback_texts=None, min_chars=50, dpi=200):
+def ocr_pdf(pdf_path, ps_script, only_pages=None, fallback_texts=None, min_chars=50, dpi=200, lang='zh-CN'):
     """返回 (pages, ocr_pages)。only_pages=None 表示整篇 OCR。"""
     import pymupdf
     doc = pymupdf.open(pdf_path)
@@ -202,7 +202,7 @@ def ocr_pdf(pdf_path, ps_script, only_pages=None, fallback_texts=None, min_chars
             png = os.path.join(TMP, 'p%05d.png' % page_no)
             pix.save(png)
             try:
-                txt = clean(ocr_image(ps_script, png))
+                txt = clean(ocr_image(ps_script, png, lang))
             finally:
                 try:
                     os.remove(png)
@@ -244,6 +244,33 @@ def script_ratio(text):
     return han / total, hangul / total, kana / total
 
 
+def lang_gate(text, lang):
+    """按目标 OCR 语言校验整篇文本；返回 (是否通过, 细节字符串)。
+
+    中文：bigram ≥0.45 且常用字 ≥0.90（阈值由调用方另传，这里只做非中文语言）
+    韩语（ko）：Hangul 占比 ≥0.10（韩文论文常混汉字/英文，0.10 是保守下限）
+    日语（ja）：假名占比 ≥0.03（日语正文必有假名，可区分「把日文当中文读」的乱码）
+    英语（en）：拉丁字母占非空白非标点字符 ≥0.50
+    """
+    han, hangul, kana = script_ratio(text)
+    if lang.startswith('ko'):
+        return (hangul >= 0.10), 'hangul=%.3f han=%.3f' % (hangul, han)
+    if lang.startswith('ja'):
+        return (kana >= 0.03), 'kana=%.3f han=%.3f' % (kana, han)
+    if lang.startswith('en'):
+        import unicodedata
+        letters = tot = 0
+        for ch in str(text or ''):
+            if ch.isspace() or unicodedata.category(ch).startswith('P'):
+                continue
+            tot += 1
+            if ch.isalpha() and ord(ch) < 0x2E80:
+                letters += 1
+        ratio = (letters / tot) if tot else 0.0
+        return (ratio >= 0.50), 'latin=%.3f' % ratio
+    return (None, 'zh 由 bigram/常用字闸负责')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--limit', type=int, default=0)
@@ -259,6 +286,7 @@ def main():
     ap.add_argument('--budget-pages', type=int, default=0, help='累计 OCR 页数上限（0=不限）')
     ap.add_argument('--min-bigram', type=float, default=0.45, help='全文 OCR 的中文 bigram 命中率下限（0=关闭）')
     ap.add_argument('--min-common', type=float, default=0.90, help='全文 OCR 的常用字覆盖率下限（0=关闭）')
+    ap.add_argument('--lang', default='zh-CN', help='OCR 语言：zh-CN / ko-KR / ja-JP（需系统已装对应 OCR 能力）')
     ap.add_argument('--skip-file', default='', help='跳过清单 JSON（{itemKey: reason}）；质量不达标的会自动追加')
     args = ap.parse_args()
 
@@ -387,19 +415,28 @@ def main():
                     _n = min(args.max_pages, len(_d))
                     _d.close()
                     only = set(range(1, _n + 1))
-                pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=only, dpi=args.dpi)
-                # 质量闸：拒绝韩/日文误识别产生的乱码，避免写入旁路污染索引
-                if args.min_bigram or args.min_common:
-                    _bg, _cm = ocr_quality('\n'.join(pages))
-                    if _bg is not None and ((args.min_bigram and _bg < args.min_bigram) or
-                                            (args.min_common and _cm < args.min_common)):
-                        mark_skip(key, 'OCR 质量不达标 bigram=%.3f common=%.3f（疑似韩/日文）' % (_bg, _cm))
-                        print('  [%d/%d] %s 跳过：OCR 质量不达标（bigram=%.3f common=%.3f，疑似韩/日文，已记入跳过清单）' % (
-                            idx, len(jobs), key, _bg, _cm))
+                pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=only, dpi=args.dpi, lang=args.lang)
+                # 质量闸：中文用 bigram/常用字；韩/日按目标语言的字形占比校验，拒绝乱码入库
+                if args.lang.startswith('zh'):
+                    if args.min_bigram or args.min_common:
+                        _bg, _cm = ocr_quality('\n'.join(pages))
+                        if _bg is not None and ((args.min_bigram and _bg < args.min_bigram) or
+                                                (args.min_common and _cm < args.min_common)):
+                            mark_skip(key, 'OCR 质量不达标 bigram=%.3f common=%.3f（疑似韩/日文）' % (_bg, _cm))
+                            print('  [%d/%d] %s 跳过：OCR 质量不达标（bigram=%.3f common=%.3f，已记入跳过清单）' % (
+                                idx, len(jobs), key, _bg, _cm))
+                            skipped += 1
+                            continue
+                else:
+                    _ok, _detail = lang_gate('\n'.join(pages), args.lang)
+                    if _ok is False:
+                        mark_skip(key, 'OCR(%s) 语言校验不达标 %s' % (args.lang, _detail))
+                        print('  [%d/%d] %s 跳过：OCR(%s) 语言校验不达标（%s，已记入跳过清单）' % (
+                            idx, len(jobs), key, args.lang, _detail))
                         skipped += 1
                         continue
             else:
-                pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=set(job['pages']), dpi=args.dpi)
+                pages, ocr_pages = ocr_pdf(pdf, ps_script, only_pages=set(job['pages']), dpi=args.dpi, lang=args.lang)
             out = os.path.join(ocr_dir, key + '.json')
             with open(out, 'w', encoding='utf-8') as f:
                 json.dump({'pages': pages, 'ocrPages': ocr_pages}, f, ensure_ascii=False)

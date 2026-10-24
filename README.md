@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.24 全量 → 58,590 块 / 768 父条目；纯净版 → 58,588 块 / 767 父条目（zip ≈ 70 MB）
+#       v0.1.24 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -204,22 +204,30 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/build?incremental=1"
 
 ```powershell
 Get-WindowsCapability -Online -Name 'Language.OCR*'   # 查看已装语言
+# 安装示例（联网；本机实测日语/英语包各约 7–8 分钟，Windows Update 慢时可能更久）
+Add-WindowsCapability -Online -Name 'Language.OCR~~~ko-KR~0.0.1.0'
+Add-WindowsCapability -Online -Name 'Language.OCR~~~ja-JP~0.0.1.0'
+Add-WindowsCapability -Online -Name 'Language.OCR~~~en-US~0.0.1.0'
 ```
 
-- **中文（zh-CN）效果良好**：实测扫描版期刊每页 2000–3000 字，可读，个别错字（"趼究"→"研究"）不影响检索
-- **韩/日文会产出乱码，必须挡住**：zh-CN 引擎读韩文会把 Hangul 误识别成「看起来像汉字、其实全是罕见字」的乱码；旧的 `--probe-lang`（只看汉字占比）会把韩文**误判为中文**并写入索引。现行做法是**质量闸**：
-  - 用语料构建 `tools/cjk_common_chars.txt`（4000 常用字）与 `tools/cjk_bigrams.txt`（14 万中文二字组）
-  - 每篇 OCR 完计算 **中文 bigram 命中率** 与 **常用字覆盖率**，低于 `--min-bigram 0.45` / `--min-common 0.90` 的**丢弃并写入跳过清单**
-  - 校准实测：真中文 bigram 0.43–0.93、常用字 0.94–1.00；韩文 bigram 0.02–0.37、日文 ≈0.63
-- 需要韩/日文时，安装对应语言包（`Add-WindowsCapability -Online -Name 'Language.OCR~~~ko-KR~0.0.1.0'`，需联网）
+**多语言支持（v0.1.24 后的 ocr_helper）**：`--lang zh-CN | ko-KR | ja-JP | en-US`，每个语言独立跑一遍、写同一份 manifest。
+
+| 语言 | 质量闸（低于即丢弃并记入跳过清单） | 本机实测 |
+|---|---|---|
+| 中文 zh-CN | 中文 bigram 命中率 ≥0.45 **且** 常用字覆盖率 ≥0.90 | 43 篇 / ~8,500 页 |
+| 韩语 ko-KR | Hangul 占比 ≥0.10 | 12 篇 / 825 页，实测 0.30–0.86 |
+| 日语 ja-JP | 假名占比 ≥0.03 | 2 篇 / 9 页，实测 0.28–0.48 |
+| 英语 en-US | 拉丁字母占比 ≥0.50 | ~10 篇（进行中） |
+
+> **为什么必须有质量闸**：zh-CN 引擎读韩文会把 Hangul 误识别成「看起来像汉字、其实全是罕见字」的乱码；旧 `--probe-lang`（只看汉字占比）会把韩文**误判为中文**写进索引。现在改为按语言校验字形占比，判据数据来自语料本身（`tools/cjk_common_chars.txt`、`tools/cjk_bigrams.txt`）。
 
 ### 规模参考（本机实测）
 
 | 类别 | 规模 | 状态 |
 |---|---|---|
-| 完全无文本层 | 70 篇 / 8,896 页 | ✅ 已 OCR 43 篇 / 7,020 页（另有历史 ~1,500 页）；跳过 40 篇（韩/日 25 + 缺 PDF 15）|
+| 完全无文本层 | 70 篇 / 8,896 页 | 已 OCR **67 篇 / 9,912 页**（中 43 + 韩 12 + 日 2 + 英 10，含历史批次）；剩余 20 篇**缺 PDF**，无法 OCR |
 | 部分空白页 | 149 篇 / 2,124 页 | 已并入前 80 页内的 612 页缺口（超出 `maxPagesPerItem` 的页本就不索引）|
-| 索引内 OCR 块 | **7,509 块 / 43 篇** | 增量构建后（此前 1,217 块 / 12 篇）|
+| 索引内 OCR 块 | **8,447 块 / 65 篇** | 中文 7,509 + 韩日 789 + 英 149（`XFN55VKS`/`HII23RCN` 与同内容副本去重后各少 1 篇）|
 
 Windows OCR 实测 **2.0–2.3 秒/页**（200 dpi）；7,000 页约 4 小时，建议分批（每批 700 页，约 26 分钟）。
 
@@ -271,6 +279,8 @@ manifest.json  bootstrap.js  prefs.js  content/  chrome/
 > 2026-10-23 在**当前 52,298 块 / 739 篇**索引上复跑金标：n=73 可定位（natural 34 + keyword 39），当前默认配置（等权 RRF k=60、无标题加成、同父条目 cap2）**篇级 R@5 = 91.8%、Hit@1 = 78.1%、MRR@10 = 0.849**。其中 n=73 是**删失口径**（另有 2 条金标的内容仍在索引里，但对应 itemKey 被 v0.1.20 去重的库内 tie-break 顶掉，属评估映射伪失败）：按 titleKey 修复映射后 **n=75，R@5 = 90.67%、Hit@1 = 77.33%、MRR@10 = 0.8397**，这是建议对外报告的口径。同一批 75 条在**去重前**的 sit-only 索引（54,778 块）上指标完全相同（90.67% / 77.33% / 0.8397）→ **去重对篇级 R@5 零效应**。历史「95.0%」是「40 条正规论文查询 + 剔除孤立 PDF 噪块语料」的口径（38/40），同口径在当前索引为 92.50%（37/40）；差异来自语料是否含孤立 PDF 噪块，不是索引退化。详见 `D:\workspace\opt_eval\audit\T1_audit.md`。
 >
 > **2026-10-24 OCR 并入后**（7,020 页 → 58,590 块 / 768 篇）复跑同一金标：**n=75、R@5 90.67%、Hit@1 78.67%（+1.33pp）、MRR@10 0.8417**——R@5 持平、Top-1 精度小幅提升。
+>
+> 之后又并入韩/日/英 OCR（+939 页 → **59,528 块 / 791 篇**）：同一金标指标**不变**（n=75、R@5 90.67%、Hit@1 78.67%、MRR 0.8417），多语言 OCR 内容未稀释中文检索。
 
 
 ## 实测（本机 Zotero 10.0.6，个人库 + 两个群组库）
@@ -315,7 +325,7 @@ manifest.json  bootstrap.js  prefs.js  content/  chrome/
 - **孤立 PDF**（无父条目）默认纳入索引，其标题来自文件名（已做清洗），信息量低的标题会在第一轮被跳过；对精度敏感时可用 `?orphans=0`
 - **库内重复条目**（同一文献在多个库/多个条目）检索时已去重（父条目 + 同标题 cap2 + 跨库正文签名去重），但 Zotero 库本身仍是脏数据，未做合并
 - OCR 为**旁路**方案（Windows 内置 OCR，保留真实页码）：中文效果良好；**韩/日文需装语言包**，未装时用 bigram/常用字质量闸拦截（见 OCR 章节）
-- 未 OCR 的剩余：主要是韩/日文扫描件（需语言包）与缺失 PDF 的附件（约 40 篇）；中文扫描件已基本处理完（43 篇 / 8,700+ 页）
+- OCR 已覆盖 **中/韩/日/英** 四语（67 篇 / 9,912 页，含历史批次）；剩余 20 篇无法 OCR（storage 缺 PDF）；韩/日/英需对应 OCR 语言包（本机已装 zh-CN / ko-KR / ja-JP / en-US）
 - 部分 PDF 文本层本身是 OCR 结果，质量参差
 
 > 已实现（v0.1.19+）：**增量更新**——启动 90 秒后自动跑增量，无变更约 3 秒短路；手动 `GET /retrieval/build?incremental=1`。
