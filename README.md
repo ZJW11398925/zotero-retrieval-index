@@ -225,7 +225,7 @@ python tools/extract_tables.py --all --workers 4
 - 参数：`tableSupplement`(0/1)、`tableSupplementMax`(0–5)，`/retrieval/admin/tune` 可调；表格按内容指纹去重；
 - v0.1.47 起**表格 sidecar 随团队包分发**（455 篇，+1.3 MB），队友部署索引后即生效；
 - 反例记录：把表格并入索引会稀释篇级排序（R@5 92→89.33），故默认 `tableChunksBuild=0`（实验开关）；
-- v0.1.48：`python tools/merge_tables.py` 做**跨页合并**（续页/空题注/同表号；34 篇/70 次，表数 2760→2690），合并表带 `pages` 页范围，补充段上限 2200 字符；
+- v0.1.48：`python tools/fix_table_headers.py` 做**表头多行合并**（双层表头并回一行；417 张表/140 篇），再跑 `merge_tables.py` 做**跨页合并**（续页/空题注/同表号；34 篇/70 次，表数 2760→2690），合并表带 `pages` 页范围，补充段上限 2200 字符；
 
 ## 维护接口：重复附件清理（v0.1.24+）
 
