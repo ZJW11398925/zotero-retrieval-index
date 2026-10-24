@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 83.6 MB，含 490 篇表格 sidecar；快照 2026-10-25；sha256 09f8ce83…；**交给队友 agent 可一键自动安装**）
+#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 83.6 MB，含 490 篇表格 sidecar；快照 2026-10-25；sha256 6fb7a06c…；**交给队友 agent 可一键自动安装**）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -196,7 +196,7 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 
 ## 交给队友 agent 一键自动安装（v0.1.52）
 
-分发包内含 `AGENT.md`（给 agent 的执行手册）+ `agent_setup.ps1`（幂等一键脚本）。队友只需把解压目录交给自己的 agent，agent 执行：
+分发包内含 `AGENT.md`（给 agent 的执行手册）+ `agent_setup.ps1`（幂等一键脚本）+ `给agent的提示词.md/.txt`（直接复制给 agent 的提示词）。队友只需把解压目录交给自己的 agent，agent 执行：
 `powershell -ExecutionPolicy Bypass -File .\agent_setup.ps1 -Yes`
 
 脚本自动：装 Zotero（winget/官方安装器）→ 写 user.js（未签名插件豁免 + 自动增量 pref）→ 把 xpi 放进 profile/extensions（**无需点 UI**）→ 关闭 Zotero 部署索引 → 启动并等待插件 → 装 Ollama+bge-m3 → 开启自动增量（90s/60min）→ 自检+检索冒烟，输出 JSON（`agent_setup_result.json`，含 ok/steps/blocked）。
