@@ -100,9 +100,21 @@ def main():
     ap.add_argument('--port', type=int, default=8898)
     ap.add_argument('--max-len', type=int, default=512)
     ap.add_argument('--batch', type=int, default=16)
+    ap.add_argument('--log', default=os.environ.get('RERANK_LOG') or r'D:\workspace\opt_eval\t14\rerank_service.log')
     args = ap.parse_args()
+    # 无控制台启动（pythonw）时把 stdout/stderr 写入日志，便于排查
+    try:
+        if args.log:
+            os.makedirs(os.path.dirname(args.log), exist_ok=True)
+            _lf = open(args.log, 'a', buffering=1, encoding='utf-8')
+            sys.stdout = _lf
+            sys.stderr = _lf
+    except Exception:
+        pass
     _state['max_len'] = args.max_len
     _state['batch'] = args.batch
+    print('[rerank] starting %s on %s:%d (max_len=%d, batch=%d) %s' % (
+        MODEL, args.host, args.port, args.max_len, args.batch, time.strftime('%Y-%m-%d %H:%M:%S')), flush=True)
     load_model(args.max_len)  # 启动即加载，避免首个请求慢
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print('[rerank] listening on http://%s:%d' % (args.host, args.port), flush=True)

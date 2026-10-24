@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.46 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
+#       v0.1.47 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -199,7 +199,7 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 | 项 | 说明 |
 |---|---|
 | 模型 | `bge-reranker-base`（PyTorch fp16，约 1.1GB，放 `D:\workspace\opt_eval\t14\rr_model`，**不随团队包分发**）|
-| 服务 | `python tools/rerank_service.py`（127.0.0.1:8898）或 `powershell -File tools/start_rerank_service.ps1` |
+| 服务 | `python tools/rerank_service.py`（127.0.0.1:8898）或 `powershell -File tools/start_rerank_service.ps1`；**已配置开机自启**（启动文件夹 `RerankService.lnk`，脚本用 Win32_Process.Create 派生、不阻塞）|
 | 插件开关 | `curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=rerank&value=1&confirm=TUNE"`（关：`reset=1`）|
 | 兼容性 | 服务不可用时自动跳过并回落（1.2s 超时 + 60s 内不再尝试），不影响检索；默认关闭 |
 | 开销 | GPU 打分 34–66ms（N=10/20），实测端到端 **+69ms/查询**（k=8）|
@@ -222,7 +222,8 @@ python tools/extract_tables.py --all --workers 4
 
 - 检索返回的 `results` 末尾可能带 `supplement: true, role: 'table'` 的条目（默认最多 2 条，来自已召回论文的表格）；
 - `evidence.tableSupplements` 给出条数，`hints` 会提示"末尾为表格补充段"；
-- 参数：`tableSupplement`(0/1)、`tableSupplementMax`(0–5)，`/retrieval/admin/tune` 可调；
+- 参数：`tableSupplement`(0/1)、`tableSupplementMax`(0–5)，`/retrieval/admin/tune` 可调；表格按内容指纹去重；
+- v0.1.47 起**表格 sidecar 随团队包分发**（455 篇，+1.3 MB），队友部署索引后即生效；
 - 反例记录：把表格并入索引会稀释篇级排序（R@5 92→89.33），故默认 `tableChunksBuild=0`（实验开关）。
 
 ## 维护接口：重复附件清理（v0.1.24+）

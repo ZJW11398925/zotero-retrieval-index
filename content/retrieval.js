@@ -1069,11 +1069,13 @@ var RetrievalIndex = (function () {
 		}
 		if (skippedRetracted) log('已过滤撤稿文献 ' + skippedRetracted + ' 条（includeRetracted=1 可查看）');
 
-		// v0.1.42：表格补充段——不参与排序，只在已召回论文后追加其表格（列表/指标类答案常在表里）
+		// v0.1.42/47：表格补充段——不参与排序，只在已召回论文后追加其表格（列表/指标类答案常在表里）
+		// v0.1.47：按表格内容指纹去重（同一论文多副本/多版本常含同一张表）
 		let tableSupplements = 0;
 		if (tuneNum('tableSupplement') > 0 && out.length) {
 			const maxSup = Math.max(0, Math.min(5, Math.round(tuneNum('tableSupplementMax'))));
 			const seenPaper = new Set();
+			const seenTable = new Set();
 			for (const r of out.slice()) {
 				if (tableSupplements >= maxSup) break;
 				const pk2 = r.parentKey || r.itemKey;
@@ -1085,6 +1087,13 @@ var RetrievalIndex = (function () {
 				if (!t) continue;
 				const md = String(t.markdown || '');
 				if (md.length < 20) continue;
+				// 表格内容指纹（去空白后前 600 字 djb2），重复表不再追加
+				const sigTxt = md.replace(/\s+/g, '').slice(0, 600);
+				let hT = 5381;
+				for (let j = 0; j < sigTxt.length; j++) hT = ((hT * 33) ^ sigTxt.charCodeAt(j)) >>> 0;
+				const sigT = hT.toString(36) + '|' + sigTxt.length;
+				if (seenTable.has(sigT)) continue;
+				seenTable.add(sigT);
 				const head = '【表' + (t.page ? '·p' + t.page : '') + (t.caption ? '｜' + String(t.caption).slice(0, 60) : '') + '】\n';
 				const body = (head + md).slice(0, full ? 3000 : 1200);
 				out.push({
@@ -1159,7 +1168,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.46',
+					ok: true, plugin: 'retrieval-index', version: '0.1.47',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
