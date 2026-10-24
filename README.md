@@ -328,7 +328,7 @@ manifest.json  bootstrap.js  prefs.js  content/  chrome/
 - OCR 已覆盖 **中/韩/日/英** 四语（67 篇 / 9,912 页，含历史批次）；剩余 20 篇无法 OCR（storage 缺 PDF）；韩/日/英需对应 OCR 语言包（本机已装 zh-CN / ko-KR / ja-JP / en-US）
 - **v0.1.25 修复**：`titlePoor()` 的两轮循环曾使 **60/835 篇低信息标题文献（4,023 块，含 AIC2016–2023 翻译 8 篇）在任何查询下都不返回**（插件真实 R@5 82.67%）；改为单轮输出后 **R@5 82.67%→88.00%**、Hit@1 70.67%→73.33%，AIC2017 等恢复 rank 1，详见 `docs/t7-reranker-validation.md`
 - **v0.1.26 新增**：篇级聚合重排（论文前两块 RRF 分数按 `s1 + 0.4·s2` 排序）——单块勉强命中的文献不再压过多块互相印证的文献；插件真实接口 **R@5 88.00%→90.67%、Hit@1 73.33%→78.67%**（=官方模拟同口径），冒烟重冻 PASS 16
-- **v0.1.27 新增**：上下文增强 embedding——建索引时把「论文标题 + 块原文」作为 embedding 输入（截断 900 字符），补块内缺失上下文；官方 75 条离线验证 R@5 90.67%→**92.00%**、Hit@1 78.67%→**80.00%**、MRR 0.8417→0.8556；回滚开关 extensions.zotero.retrieval.embedTitle=0 + embedOnly 重建
+- **v0.1.27 新增**：上下文增强 embedding——建索引时把「论文标题 + 块原文」作为 embedding 输入（截断 900 字符）。离线官方评估 R@5 90.67%→92.00%、Hit@1 78.67%→80.00%；**插件真实接口实测** R@5 90.67%→89.33%（1 条查询噪声级）、Hit@1 78.67%→**81.33%**、MRR 0.8384→**0.8526**。注意：离线评估用 Node ICU 分词、插件用 Firefox ICU，个别查询排序不同，上线前须用插件真实回放复核。回滚：extensions.zotero.retrieval.embedTitle=0 + GET /retrieval/build?embedonly=1
 - 部分 PDF 文本层本身是 OCR 结果，质量参差
 
 > 已实现（v0.1.19+）：**增量更新**——启动 90 秒后自动跑增量，无变更约 3 秒短路；手动 `GET /retrieval/build?incremental=1`。
