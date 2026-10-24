@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "generated_by": "tools/smoke_test.py --freeze",
-  "frozen_at": "2026-10-24T16:52:52+08:00",
+  "frozen_at": "2026-10-24T17:19:43+08:00",
   "base_url": "http://127.0.0.1:23119",
   "plugin": "retrieval-index",
-  "plugin_version": "0.1.31",
+  "plugin_version": "0.1.32",
   "k": 5,
   "mode": "hybrid",
   "stats": {
@@ -184,24 +184,24 @@
           "pageSource": "pdf"
         },
         {
-          "itemKey": "VGQ2IYBU",
-          "parentKey": "VGQ2IYBU",
-          "title": "55908383 zh",
-          "page": 1,
-          "pageSource": "pdf"
-        },
-        {
-          "itemKey": "VGQ2IYBU",
-          "parentKey": "VGQ2IYBU",
-          "title": "55908383 zh",
-          "page": 7,
+          "itemKey": "PB9S5V9Q",
+          "parentKey": "PB9S5V9Q",
+          "title": "AIC2023翻译",
+          "page": 38,
           "pageSource": "pdf"
         },
         {
           "itemKey": "PB9S5V9Q",
           "parentKey": "PB9S5V9Q",
           "title": "AIC2023翻译",
-          "page": 38,
+          "page": 37,
+          "pageSource": "pdf"
+        },
+        {
+          "itemKey": "VGQ2IYBU",
+          "parentKey": "VGQ2IYBU",
+          "title": "55908383 zh",
+          "page": 1,
           "pageSource": "pdf"
         }
       ]

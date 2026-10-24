@@ -19,7 +19,7 @@ var RetrievalIndex = (function () {
 		// aggW2：篇级聚合第二块权重。离线（Node ICU）w=0.4 有增益，但线上（Zotero/Firefox ICU）
 		// 实测 w=0 最好（92.00% vs 89.33% R@5），故默认 0；需要时可临时调回。
 		aggW2: { min: 0, max: 2, def: 0 },
-		rrfK: { min: 1, max: 500, def: 60 },      // RRF 平滑常数
+		rrfK: { min: 1, max: 500, def: 30 },      // RRF 平滑常数（T14 段落级验证：30 优于 60，篇级不掉）
 		wBm25: { min: 0, max: 5, def: 1 },        // BM25 路权重
 		wDense: { min: 0, max: 5, def: 1 }        // 向量路权重
 	};
@@ -955,7 +955,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.31',
+					ok: true, plugin: 'retrieval-index', version: '0.1.32',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}
