@@ -26,7 +26,11 @@ var RetrievalIndex = (function () {
 		// 开：P@1 41.5% / P@5 61.0%；关：P@1 53.7% / P@5 73.2%（篇级指标不变）。
 		// 结论：默认关闭；保留开关便于个别场景回滚验证。
 		abstractPrior: { min: 0, max: 1, def: 0 },
-		capPerPaper: { min: 1, max: 5, def: 2 }   // 同一文献最多返回几段（cap=2 段落级最优）
+		capPerPaper: { min: 1, max: 5, def: 2 },  // 同一文献最多返回几段（cap=2 段落级最优）
+		// v0.1.36：可选重排（本地 GPU 服务）。离线验证：N=20,w=0.6 → 段落 P@1 +9.7pp / P@5 +7.3pp，篇级不降。
+		rerank: { min: 0, max: 1, def: 0 },       // 1=启用（需本地服务运行）
+		rerankN: { min: 1, max: 50, def: 20 },    // 重排候选数
+		rerankW: { min: 0, max: 1, def: 0.6 }     // 重排分权重（与原始名次 RRF 融合）
 	};
 	const tuneNum = (key) => {
 		const spec = TUNE_SPEC[key] || { min: 0, max: 1e9, def: 0 };
@@ -798,7 +802,7 @@ var RetrievalIndex = (function () {
 		// 注意：曾尝试叠加“标题命中”绝对加分，实测是严重倒退——
 		// RRF 单路 rank1 仅 1/(60+1)≈0.016，任何绝对加分都会把“标题沾边但正文无关”的文献顶到最前。
 		// 离线评估（34 条金标）：加 0.25 后自然语言 R@5 从 93.8% 掉到 56.3%，故彻底移除。
-		const ranked = [];
+		let ranked = [];
 		for (const [i, base] of scoreMap) ranked.push([i, base]);
 		ranked.sort((a, b) => b[1] - a[1]);
 		// 篇级聚合（v0.1.26，T11 离线验证）：同一文献前两块 RRF 分数按 s1 + 0.4*s2 排序。
@@ -841,6 +845,43 @@ var RetrievalIndex = (function () {
 				if (sy !== sx) return sy - sx;
 				return y[1] - x[1];
 			});
+		}
+
+		// v0.1.36：可选重排（本地 GPU 服务，默认关闭；需 python tools/rerank_service.py 常驻）。
+		// 离线验证（75 条金标，段落级）：N=20、w=0.6 → 段落 P@1 53.7%→63.4%、P@5 73.2%→80.5%，
+		// 篇级 R@5 不变、H@1 +1.33pp、MRR +0.0147；GPU 延迟约 66ms/查询。
+		if (tuneNum('rerank') > 0 && ranked.length > 1) {
+			try {
+				const RN = Math.max(1, Math.min(50, Math.round(tuneNum('rerankN'))));
+				const RW = Math.max(0, Math.min(1, tuneNum('rerankW')));
+				const head = ranked.slice(0, RN);
+				const passages = head.map((p) => String((idx.chunks[p[0]] && idx.chunks[p[0]].text) || ''));
+				const svc = String(getPref('rerankURL', 'http://127.0.0.1:8898')).replace(/\/+$/, '');
+				const ts = timeoutSignal(4000);
+				let scores = null;
+				try {
+					const res = await fetch(svc + '/rerank', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ q: String(q), passages: passages }),
+						signal: ts.signal,
+						redirect: 'error'
+					});
+					if (res.ok) {
+						const j = await res.json();
+						if (j && Array.isArray(j.scores) && j.scores.length === head.length) scores = j.scores;
+					}
+				} finally { ts.clear(); }
+				if (scores) {
+					const rr = {};
+					head.map((p, i) => i).sort((a, b) => scores[b] - scores[a])
+						.forEach((i, r) => { rr[i] = r + 1; });
+					const K0 = 30;
+					const comb = head.map((p, i) => (RW / (K0 + rr[i])) + ((1 - RW) / (K0 + i + 1)));
+					const order = head.map((p, i) => i).sort((a, b) => comb[b] - comb[a]);
+					ranked = order.map((i) => head[i]).concat(ranked.slice(RN));
+				}
+			} catch (e) { log('重排服务不可用，已跳过：' + e); }
 		}
 
 		const out = [];
@@ -963,7 +1004,7 @@ var RetrievalIndex = (function () {
 			supportedMethods: ['GET'],
 			init: function (options) {
 				return [200, 'application/json', JSON.stringify({
-					ok: true, plugin: 'retrieval-index', version: '0.1.35',
+					ok: true, plugin: 'retrieval-index', version: '0.1.36',
 					dataDir, hasDataDir: !!dataDir, startupError, ts: new Date().toISOString()
 				})];
 			}

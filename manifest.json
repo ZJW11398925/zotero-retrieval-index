@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Retrieval Index",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "description": "Build a page-aware passage index for your local Zotero library and expose it over Zotero's local HTTP server.",
   "author": "the-group",
   "icons": {

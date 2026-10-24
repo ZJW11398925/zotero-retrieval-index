@@ -141,7 +141,7 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.35 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
+#       v0.1.36 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip ≈ 72 MB）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
@@ -170,6 +170,8 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 | `wBm25` / `wDense` | 两路权重 | 0–5 | 1 / 1 |
 | `abstractPrior` | 摘要页先验（首条替换为含摘要标记的首页块） | 0–1 | **0**（T14 段落级实测：开=负收益，P@1 41.5% → 关=53.7%）|
 | `capPerPaper` | 同一文献最多返回几段 | 1–5 | 2（cap=2 段落级最优）|
+| `rerank` | 启用 GPU 重排（需本地服务） | 0–1 | 0（本机已手动开为 1）|
+| `rerankN` / `rerankW` | 重排候选数 / 重排权重 | 1–50 / 0–1 | 20 / 0.6 |
 
 自动部署脚本：`tools/deploy_xpi.ps1 <xpi路径>`（关 Zotero → 备份旧 xpi → 替换 → 重启 → 等插件响应），改代码后一条命令上线。
 
@@ -188,6 +190,20 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 工具在 `opt_eval/t14/`：`build_passage_gold.py`（重建后可重映射）、`passage_eval.py`（段落级 harness）、
 `phase_c_metrics.py`（参数 A/B）、`paper_quick.py`、`cross_table.py`，报告 `T14_REPORT.md`。
 参数结论：**rrfK=30**、**abstractPrior=0**（摘要页先验实测为负收益）、**capPerPaper=2**；k 建议见协议文档（默认 k=8）。
+
+## 可选重排：本地 GPU reranker（v0.1.36+）
+
+段落级金标复测（T14）显示 cross-encoder 在**段落级**有明显价值（此前 T7 只按篇级判"不达标"）：
+融合 N=20 / w=0.6 时，段落 P@1 53.7%→63.4%、P@5 73.2%→80.5%，篇级 H@1 +1.33pp、MRR +0.0147。
+
+| 项 | 说明 |
+|---|---|
+| 模型 | `bge-reranker-base`（PyTorch fp16，约 1.1GB，放 `D:\workspace\opt_eval\t14\rr_model`，**不随团队包分发**）|
+| 服务 | `python tools/rerank_service.py`（127.0.0.1:8898）或 `powershell -File tools/start_rerank_service.ps1` |
+| 插件开关 | `curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=rerank&value=1&confirm=TUNE"`（关：`reset=1`）|
+| 兼容性 | 服务不可用时自动跳过并回落，不影响检索；默认关闭 |
+| 开销 | GPU 打分 34–66ms（N=10/20），实测端到端 **+69ms/查询**（k=8）|
+| 线上实测 | 篇级 H@1 81.33→82.67%、MRR 0.8529→0.8596；段落 P@1(high) +4.8pp、(wide) +4.2pp |
 
 ## 维护接口：重复附件清理（v0.1.24+）
 
