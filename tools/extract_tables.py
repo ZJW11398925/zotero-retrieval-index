@@ -177,7 +177,9 @@ def work(item):
         return None
     if not tables:
         return None
-    return {'itemKey': item['itemKey'], 'title': item['title'], 'source': p,
+    # 只记录文件名，不写本机绝对路径（分发包隐私要求）
+    return {'itemKey': item['itemKey'], 'title': item['title'],
+            'sourceFile': os.path.basename(str(p).replace('\\', '/')),
             'extractedAt': time.strftime('%Y-%m-%dT%H:%M:%S'), 'tables': tables}
 
 

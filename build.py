@@ -18,7 +18,6 @@ INCLUDE = [
     'manifest.json',
     'bootstrap.js',
     'prefs.js',
-    'README.md',
     'LICENSE',
     'content/core.js',
     'content/protocol-text.js',
@@ -26,6 +25,7 @@ INCLUDE = [
     'chrome/content/icons/favicon.png',
     'chrome/content/icons/favicon@0.5x.png',
 ]
+# 注意：README.md 是开发文档（含本机路径/评测细节），不打进 xpi（分发包隐私要求）。
 
 PROTOCOL_SRC = 'docs/agent-usage-protocol.md'
 PROTOCOL_OUT = 'content/protocol-text.js'

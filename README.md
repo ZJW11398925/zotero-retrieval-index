@@ -141,13 +141,14 @@ python tools/pack_team_kit.py --out-dir D:\workspace\dist
 # 纯净版（剔除个人库 lib1：其 itemKey 在他人机器上不存在，会变成噪声）
 python tools/pack_team_kit.py --out-dir D:\workspace\dist --exclude-libraries 1
 # 产物：retrieval-index-team-kit-v<版本>-<日期>.zip
-#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 72.8 MB，含 454 篇表格 sidecar；sha256 650d4d7d…）
+#       v0.1.48 全量 → 59,528 块 / 791 父条目；纯净版 → 59,526 块 / 790 父条目（zip 72.8 MB，含 454 篇表格 sidecar；sha256 7080653a…）
 ```
 
 - 约定：**internal file share/群文件**流转（索引含文献正文，禁止公开上传）；**每月重打一次全量快照**，队友关闭 Zotero 后重跑 `deploy_index.ps1 -Force` 覆盖即可（自动备份、可回滚）
 - 队友三步：设 `xpinstall.signatures.required=false` → 装 xpi 重启 → 关 Zotero 跑 `deploy_index.ps1 -Force`，再跑 `verify_install.ps1`（17 项自检）
 - kit 源文件在 `tools/team-kit/`（部署脚本、校验脚本、使用说明），打包脚本会注入快照日期/版本/块数/表格篇数并生成 SHA256 清单
 - **依赖安装（v0.1.48 包）**：`tools/team-kit/install_ollama.ps1` 一键检测/安装 Ollama + 拉取 bge-m3 + 验证 1024 维；`安装Ollama与bge-m3.md` 含手动/winget/代理/离线模型方案（已进团队包）
+- **分发包隐私（v0.1.49）**：xpi 不再打包开发 README；表格 sidecar 去除本机 `source` 绝对路径（改 `sourceFile` 文件名）；脚本/文档示例路径改为环境变量/占位符；审计脚本 `tools/audit 逻辑见 opt_eval/t14/audit_final.py` 复核：脚本/文档/xpi/元数据 **0 命中**，索引正文中 **0 个 Windows 绝对路径**（仅文献原文出现的 user/URL 等词）
 - **团队交付验收（v0.1.48）**：安装说明已重写（前置条件含 Ollama+bge-m3、代理例外、autoIncremental 首装建议）；`verify_install.ps1` 升级为 18 项（manifest/xpi sha/接口/协议表格补充段/检索/OCR+表格旁路/Ollama 可选），PASS 18 / WARN 2 / FAIL 0；`deploy_index.ps1` 部署后打印块数/OCR/表格统计；已在模拟 profile 实测部署成功
 
 ## 线上调参（v0.1.28+，无需重装）
