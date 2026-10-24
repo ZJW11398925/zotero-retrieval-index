@@ -192,6 +192,13 @@ curl --noproxy '*' "http://127.0.0.1:23119/retrieval/admin/tune?key=aggW2&reset=
 `phase_c_metrics.py`（参数 A/B）、`paper_quick.py`、`cross_table.py`，报告 `T14_REPORT.md`。
 参数结论：**rrfK=30**、**abstractPrior=0**（摘要页先验实测为负收益）、**capPerPaper=2**；k 建议见协议文档（默认 k=8）。
 
+## 无 Ollama 时的质量代价（实测 2026-10-24）
+
+同索引、75 条金标：混合+重排 R@5 **92.00%** / H@1 **82.67%** / MRR 0.8596；
+纯 BM25（无 Ollama）**74.67% / 64.00% / 0.7073**（R@5 −17.3pp）；BM25+rerank 76.00% / 65.33% / 0.7162。
+段落级首条命中 61.0% → 41.5%（P@5 73.2% → 61.0%，加 rerank 可回到 70.7%）。
+结论：Ollama + bge-m3 是质量关键项（1.2GB，CPU 也可跑）；无向量时 reranker 只能小幅补偿。
+
 ## 可选重排：本地 GPU reranker（v0.1.36+）
 
 段落级金标复测（T14）显示 cross-encoder 在**段落级**有明显价值（此前 T7 只按篇级判"不达标"）：
